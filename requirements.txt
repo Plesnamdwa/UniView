@@ -1,0 +1,10 @@
+# UniView - Standalone 3D Asset & Rig Visualizer Dependencies
+# Conda / System C++ library required for pyassimp:
+#   conda install -n unimate assimp=5.4.3 -y
+
+PyQt6>=6.6.0
+moderngl>=5.10.0
+PyGLM>=2.7.0
+pyassimp>=5.2.5
+numpy>=1.26.0
+Pillow>=10.0.0
