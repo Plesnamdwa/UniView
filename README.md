@@ -2,7 +2,7 @@
 
   <img src="docs/images/logo.png" alt="UniView Logo" width="128" height="128" style="border-radius: 28px;" />
 
-  # UniView 2.0
+  # UniView
 
   **Next-Gen Minimalist 3D Asset & Rig Visualizer with Expanding Label Navigation**
 
