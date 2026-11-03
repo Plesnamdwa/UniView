@@ -68,7 +68,11 @@ class GLRenderer:
     def __init__(self, ctx: moderngl.Context, shaders_dir: Optional[str] = None):
         self.ctx: moderngl.Context = ctx
         if shaders_dir is None:
-            shaders_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "shaders")
+            import sys
+            base_dir = getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            shaders_dir = os.path.join(base_dir, "shaders")
+            if not os.path.isdir(shaders_dir):
+                shaders_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "shaders")
         self.shaders_dir: str = shaders_dir
 
         # Shader Programs

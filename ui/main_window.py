@@ -56,6 +56,11 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(800, 500)
         self.setAcceptDrops(True)
 
+        base_dir = getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        icon_path = os.path.join(base_dir, "docs", "images", "logo.ico")
+        if os.path.isfile(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
+
         self.current_scene: Optional[SceneData] = None
         self.settings = QSettings("UniView", "UniView")
         self.recent_files: List[str] = self._load_recent_files()
@@ -134,10 +139,13 @@ class MainWindow(QMainWindow):
         # ---------------------------------------------------------------------
         target_file = initial_filepath
         if not target_file or not os.path.isfile(target_file):
-            samples_dir = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                "samples",
-            )
+            base_dir = getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            samples_dir = os.path.join(base_dir, "samples")
+            if not os.path.isdir(samples_dir):
+                samples_dir = os.path.join(
+                    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                    "samples",
+                )
             base_char = os.path.join(samples_dir, "UniView_BaseCharacter.fbx")
             if os.path.isfile(base_char):
                 target_file = base_char
@@ -615,10 +623,13 @@ class MainWindow(QMainWindow):
 
     def _on_load_sample_clicked(self) -> None:
         """Load default base character asset."""
-        samples_dir = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "samples",
-        )
+        base_dir = getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        samples_dir = os.path.join(base_dir, "samples")
+        if not os.path.isdir(samples_dir):
+            samples_dir = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "samples",
+            )
         base_char = os.path.join(samples_dir, "UniView_BaseCharacter.fbx")
         if os.path.isfile(base_char):
             self.open_file(base_char)

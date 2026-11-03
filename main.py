@@ -10,16 +10,22 @@ from __future__ import annotations
 import os
 import sys
 
-# Ensure Windows Conda Library/bin is registered for assimp.dll resolution
+# Ensure Windows DLL directories (Conda Library/bin or PyInstaller bundle) are registered for assimp.dll resolution
 if os.name == "nt":
-    conda_bin = os.path.join(sys.prefix, "Library", "bin")
-    if os.path.isdir(conda_bin):
-        try:
-            os.add_dll_directory(conda_bin)
-        except Exception:
-            pass
-        if conda_bin not in os.environ.get("PATH", ""):
-            os.environ["PATH"] = conda_bin + os.pathsep + os.environ.get("PATH", "")
+    candidate_bins = [
+        os.path.join(sys.prefix, "Library", "bin"),
+        os.path.dirname(os.path.abspath(sys.executable)),
+    ]
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        candidate_bins.insert(0, getattr(sys, "_MEIPASS"))
+    for bin_dir in candidate_bins:
+        if os.path.isdir(bin_dir):
+            try:
+                os.add_dll_directory(bin_dir)
+            except Exception:
+                pass
+            if bin_dir not in os.environ.get("PATH", ""):
+                os.environ["PATH"] = bin_dir + os.pathsep + os.environ.get("PATH", "")
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
