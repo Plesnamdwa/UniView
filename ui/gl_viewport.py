@@ -29,13 +29,17 @@ from core.renderer import GLRenderer, RenderOptions
 from core.math_utils import AABB
 from core.raycast import raycast_scene, pick_bone_at_screen
 from core.gizmo import is_pos_in_gizmo_region, hit_test_gizmo_axis
+from core.bounding_box import compute_scene_bounds, BoundingBoxInfo
+from core.gimbal import hit_test_gimbal_rings, compute_gimbal_drag_angle
 from ui.custom_widgets import (
     SegmentedControl,
     ToastNotification,
     ViewportDropOverlay,
     ViewportLoadingOverlay,
     MeasurementHUDCard,
+    BoundingBoxHUDCard,
 )
+
 
 
 class GLViewport(QOpenGLWidget):
@@ -49,6 +53,11 @@ class GLViewport(QOpenGLWidget):
     up_vector_changed = pyqtSignal(str, bool)  # mode ('Y' or 'Z'), is_flipped
     measure_mode_toggled = pyqtSignal(bool)
     bone_picked = pyqtSignal(int)
+    wireframe_toggled = pyqtSignal(bool)
+    bbox_toggled = pyqtSignal(bool)
+    bone_fk_rotated = pyqtSignal(int, float, float, float)  # bone_id, rx, ry, rz
+    gimbal_toggled = pyqtSignal(bool)
+
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -111,6 +120,17 @@ class GLViewport(QOpenGLWidget):
         self.hud_measure = MeasurementHUDCard(self)
         self.hud_measure.clear_requested.connect(self.clear_measurements)
         self.hud_measure.close_requested.connect(lambda: self.set_measure_mode(False))
+
+        self.hud_bbox = BoundingBoxHUDCard(self)
+        self.hud_bbox.close_requested.connect(lambda: self.set_show_bbox(False))
+
+        # 3D FK Rotation Gimbal Drag State
+        self._is_gimbal_dragging: bool = False
+        self._gimbal_drag_axis: Optional[str] = None
+        self._gimbal_drag_start_pos: Tuple[float, float] = (0.0, 0.0)
+        self._gimbal_start_euler: glm.vec3 = glm.vec3(0.0)
+
+
 
     def initializeGL(self) -> None:
         """Called once upon OpenGL context creation."""
@@ -187,6 +207,11 @@ class GLViewport(QOpenGLWidget):
             measure_points=measure_pts,
         )
 
+        # Update Bounding Box HUD if enabled
+        if self.render_options.show_bbox and self.scene_data:
+            bbox = compute_scene_bounds(self.scene_data, model_m)
+            self.hud_bbox.set_bbox_info(bbox)
+
         # Emit updated camera coordinates for UI status bar (throttled to ~12 Hz for smooth 60 FPS)
         if now - self._last_cam_emit_time >= 0.08:
             tx = float(self.camera.target.x)
@@ -210,6 +235,7 @@ class GLViewport(QOpenGLWidget):
         self.toast._reposition()
         self.drop_overlay.sync_geometry()
         self.hud_measure._update_size_and_position()
+        self.hud_bbox._update_size_and_position()
         if self.loading_overlay.isVisible():
             self.loading_overlay.setGeometry(0, 0, self.width(), self.height())
 
@@ -385,6 +411,72 @@ class GLViewport(QOpenGLWidget):
         self.hud_measure.update()
         self.update()
 
+    def set_wireframe_mode(self, enabled: bool) -> None:
+        """Toggle wireframe mesh overlay on top of shaded geometry."""
+        self.render_options.show_wireframe = bool(enabled)
+        self.wireframe_toggled.emit(self.render_options.show_wireframe)
+        status_txt = "ON" if self.render_options.show_wireframe else "OFF"
+        self.show_toast(f"🕸️ Wireframe Overlay: {status_txt}", kind="info" if self.render_options.show_wireframe else "neutral")
+        self.update()
+
+    def toggle_wireframe(self) -> None:
+        """Toggle wireframe overlay between active and inactive."""
+        self.set_wireframe_mode(not self.render_options.show_wireframe)
+
+    def set_show_bbox(self, enabled: bool) -> None:
+        """Toggle 3D bounding box cage and real-time dimension HUD card."""
+        self.render_options.show_bbox = bool(enabled)
+        if enabled:
+            model_m = glm.mat4_cast(self._cur_model_quat)
+            bbox = compute_scene_bounds(self.scene_data, model_m)
+            self.hud_bbox.set_bbox_info(bbox)
+            self.hud_bbox.show_card()
+            self.show_toast("📦 Bounding Box: ON", kind="info")
+        else:
+            self.hud_bbox.hide_card()
+            self.show_toast("📦 Bounding Box: OFF", kind="neutral")
+        self.bbox_toggled.emit(self.render_options.show_bbox)
+        self.update()
+
+    def toggle_show_bbox(self) -> None:
+        """Toggle bounding box display."""
+        self.set_show_bbox(not self.render_options.show_bbox)
+
+    def set_show_fk_gimbal(self, enabled: bool) -> None:
+        """Toggle 3D FK rotation gimbal visibility."""
+        self.render_options.show_fk_gimbal = bool(enabled)
+        self.gimbal_toggled.emit(self.render_options.show_fk_gimbal)
+        self.show_toast(f"🔄 3D FK Gimbal: {'ON' if enabled else 'OFF'}", kind="info" if enabled else "neutral")
+        self.update()
+
+    def toggle_show_fk_gimbal(self) -> None:
+        """Toggle 3D FK rotation gimbal between active and inactive."""
+        self.set_show_fk_gimbal(not self.render_options.show_fk_gimbal)
+
+    def _get_selected_bone_pivot_and_radius(self) -> Tuple[Optional[glm.vec3], float, Optional[any]]:
+        """Return (world_pivot, gimbal_radius, bone_node) for the currently selected bone."""
+        if (
+            not self.scene_data
+            or not self.scene_data.skeleton.has_bones
+            or self.render_options.active_bone_id < 0
+        ):
+            return None, 1.0, None
+
+        bone = self.scene_data.skeleton.find_bone_by_id(self.render_options.active_bone_id)
+        if bone is None:
+            return None, 1.0, None
+
+        model_m = glm.mat4_cast(self._cur_model_quat)
+        local_pivot = glm.vec3(bone.world_matrix[3].x, bone.world_matrix[3].y, bone.world_matrix[3].z)
+        world_pivot = glm.vec3(model_m * glm.vec4(local_pivot, 1.0))
+
+        cam_dist = float(glm.length(self.camera.position - world_pivot))
+        radius = self.scene_data.scene_aabb.radius if self.scene_data.scene_aabb.is_valid else 1.0
+        gimbal_rad = max(cam_dist * 0.08, radius * 0.04, 0.08)
+        return world_pivot, gimbal_rad, bone
+
+
+
     # -------------------------------------------------------------------------
     # 3D Measurement Tool Control Methods
     # -------------------------------------------------------------------------
@@ -453,6 +545,20 @@ class GLViewport(QOpenGLWidget):
         if event.button() == Qt.MouseButton.LeftButton:
             self._press_pos = event.pos()
             self._is_potential_click = True
+
+            # 0. Check if clicking on an active 3D FK Rotation Gimbal ring
+            if self.render_options.show_fk_gimbal and self.render_options.active_gimbal_axis:
+                pivot, rad, bone = self._get_selected_bone_pivot_and_radius()
+                if bone is not None:
+                    self._is_gimbal_dragging = True
+                    self._gimbal_drag_axis = self.render_options.active_gimbal_axis
+                    self._gimbal_drag_start_pos = (float(event.pos().x()), float(event.pos().y()))
+                    self._gimbal_start_euler = glm.vec3(bone.slider_euler_deg)
+                    self._is_orbiting = False
+                    self._is_potential_click = False
+                    event.accept()
+                    return
+
             # If clicking in the gizmo corner, don't start orbit
             if self.render_options.show_gizmo and is_pos_in_gizmo_region(
                 float(event.pos().x()), float(event.pos().y()), float(self.height())
@@ -467,16 +573,92 @@ class GLViewport(QOpenGLWidget):
         event.accept()
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
-        # Hover cursor feedback (pointing hand over gizmo, crosshair in measure mode)
+        # 1. Active 3D FK Gimbal Ring Dragging
+        if self._is_gimbal_dragging:
+            pivot, rad, bone = self._get_selected_bone_pivot_and_radius()
+            if bone is not None and pivot is not None:
+                delta_deg = compute_gimbal_drag_angle(
+                    start_mouse=self._gimbal_drag_start_pos,
+                    current_mouse=(float(event.pos().x()), float(event.pos().y())),
+                    gimbal_center=pivot,
+                    axis=self._gimbal_drag_axis,
+                    camera=self.camera,
+                    viewport_w=float(self.width()),
+                    viewport_h=float(self.height()),
+                )
+
+                if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                    delta_deg *= 0.25
+
+                new_rx = self._gimbal_start_euler.x
+                new_ry = self._gimbal_start_euler.y
+                new_rz = self._gimbal_start_euler.z
+
+                if self._gimbal_drag_axis == "X":
+                    new_rx = self._gimbal_start_euler.x + delta_deg
+                    if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+                        new_rx = round(new_rx / 5.0) * 5.0
+                elif self._gimbal_drag_axis == "Y":
+                    new_ry = self._gimbal_start_euler.y + delta_deg
+                    if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+                        new_ry = round(new_ry / 5.0) * 5.0
+                elif self._gimbal_drag_axis == "Z":
+                    new_rz = self._gimbal_start_euler.z + delta_deg
+                    if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+                        new_rz = round(new_rz / 5.0) * 5.0
+
+                new_rx = ((new_rx + 180.0) % 360.0) - 180.0
+                new_ry = ((new_ry + 180.0) % 360.0) - 180.0
+                new_rz = ((new_rz + 180.0) % 360.0) - 180.0
+
+                bone.set_slider_rotation(new_rx, new_ry, new_rz)
+                self.scene_data.skeleton.update_forward_kinematics()
+                self.bone_fk_rotated.emit(bone.id, new_rx, new_ry, new_rz)
+
+                axis_label = {"X": "Pitch (X)", "Y": "Yaw (Y)", "Z": "Roll (Z)"}.get(self._gimbal_drag_axis, "Rot")
+                active_val = {"X": new_rx, "Y": new_ry, "Z": new_rz}.get(self._gimbal_drag_axis, 0.0)
+                snap_badge = " [Snap 5°]" if (event.modifiers() & Qt.KeyboardModifier.ControlModifier) else ""
+                fine_badge = " [Fine]" if (event.modifiers() & Qt.KeyboardModifier.ShiftModifier) else ""
+                self.show_toast(f"🔄 {axis_label}: {active_val:+.1f}°{snap_badge}{fine_badge}", kind="info")
+                self.update()
+                event.accept()
+                return
+
+        # 2. Hover cursor feedback (pointing hand over gimbal ring, gizmo, or measure crosshair)
         if not event.buttons():
-            if self.render_options.show_gizmo and is_pos_in_gizmo_region(
-                float(event.pos().x()), float(event.pos().y()), float(self.height())
-            ):
+            gimbal_hit = None
+            if self.render_options.show_fk_gimbal and self.render_options.show_skeleton:
+                pivot, rad, bone = self._get_selected_bone_pivot_and_radius()
+                if pivot is not None:
+                    gimbal_hit = hit_test_gimbal_rings(
+                        mouse_x=float(event.pos().x()),
+                        mouse_y=float(event.pos().y()),
+                        viewport_w=float(self.width()),
+                        viewport_h=float(self.height()),
+                        camera=self.camera,
+                        gimbal_center=pivot,
+                        gimbal_radius=rad,
+                        hit_tolerance_px=16.0,
+                    )
+
+            if gimbal_hit is not None:
+                if self.render_options.active_gimbal_axis != gimbal_hit:
+                    self.render_options.active_gimbal_axis = gimbal_hit
+                    self.update()
                 self.setCursor(Qt.CursorShape.PointingHandCursor)
-            elif self._is_measure_mode:
-                self.setCursor(Qt.CursorShape.CrossCursor)
             else:
-                self.setCursor(Qt.CursorShape.ArrowCursor)
+                if self.render_options.active_gimbal_axis is not None:
+                    self.render_options.active_gimbal_axis = None
+                    self.update()
+
+                if self.render_options.show_gizmo and is_pos_in_gizmo_region(
+                    float(event.pos().x()), float(event.pos().y()), float(self.height())
+                ):
+                    self.setCursor(Qt.CursorShape.PointingHandCursor)
+                elif self._is_measure_mode:
+                    self.setCursor(Qt.CursorShape.CrossCursor)
+                else:
+                    self.setCursor(Qt.CursorShape.ArrowCursor)
 
         if event.buttons() & Qt.MouseButton.LeftButton:
             dist = (event.pos() - self._press_pos).manhattanLength()
@@ -498,7 +680,14 @@ class GLViewport(QOpenGLWidget):
         event.accept()
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        if self._is_gimbal_dragging:
+            self._is_gimbal_dragging = False
+            self.update()
+            event.accept()
+            return
+
         if event.button() == Qt.MouseButton.LeftButton:
+
             is_click = self._is_potential_click and ((event.pos() - self._press_pos).manhattanLength() <= 4)
             if is_click:
                 # 1. Interactive Corner Gizmo: 1-click snap to standard Ortho/Axis views!

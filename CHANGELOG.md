@@ -5,6 +5,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [2.1.0] - 2026-11-06
+
+### 🌟 Added
+- **Wireframe Overlay Mode (`W`)**:
+  - Polygon-offset wireframe pass (`core/renderer.py`) rendered directly over shaded, textured, heatmap, or unlit models with zero z-fighting.
+  - Theme-aware wireframe colors: sleek cyber blue `(0.42, 0.68, 0.95, 0.70)` in dark mode and crisp blueprint slate `(0.18, 0.24, 0.38, 0.80)` in light mode.
+  - Top header quick toggle pill (`Wire`) and View menu shortcut `W`.
+- **3D Bounding Box Dimensions & Architectural Cage Display (`Shift+B` / `O`)**:
+  - Procedural 3D bounding box cage (`core/bounding_box.py`) with 12 edge lines and corner accent brackets.
+  - Accounts dynamically for model matrices, up-vector rotations, and node hierarchies.
+  - Floating `BoundingBoxHUDCard` widget in viewport displaying real-time dimensions ($W$ Width, $H$ Height, $D$ Depth), bounding volume in $\text{m}^3$, and center coordinates.
+  - View menu shortcut `Shift+B` / `O` and top header pill (`BBox`).
+- **Interactive 3D Viewport Rotation Gimbal for FK Posing (`R`)**:
+  - 3 dedicated, color-coded orthogonal rotation rings rendered at the active joint pivot: Pitch ($X$-axis, Red), Yaw ($Y$-axis, Green), and Roll ($Z$-axis, Blue) (`core/gimbal.py`).
+  - Screen-space hit-testing with interactive hover highlight (active ring turns into glowing amber).
+  - Natural mouse drag rotation with angular delta calculation around projected gimbal center.
+  - Modifiers: `Ctrl` enables 5° angle snapping; `Shift` enables 0.25x ultra-fine precision mode.
+  - Live bidirectional synchronization: dragging in the 3D viewport immediately recalculates skeletal forward kinematics, deforms the skinned mesh in real time at 60 FPS, updates FK rotation sliders in the side panel, and refreshes the Transform Inspector.
+
+---
+
 ## [2.0.0] - 2026-11-05
 
 ### 🌟 Added

@@ -214,6 +214,22 @@ class MainWindow(QMainWindow):
         self.btn_pill_xray.setToolTip("Toggle Skeleton X-Ray Mode (X)")
         layout.addWidget(self.btn_pill_xray)
 
+        self.btn_pill_wireframe = QPushButton("Wire")
+        self.btn_pill_wireframe.setProperty("pill", True)
+        self.btn_pill_wireframe.setCheckable(True)
+        self.btn_pill_wireframe.setChecked(False)
+        self.btn_pill_wireframe.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_pill_wireframe.setToolTip("Toggle Wireframe Overlay (W)")
+        layout.addWidget(self.btn_pill_wireframe)
+
+        self.btn_pill_bbox = QPushButton("BBox")
+        self.btn_pill_bbox.setProperty("pill", True)
+        self.btn_pill_bbox.setCheckable(True)
+        self.btn_pill_bbox.setChecked(False)
+        self.btn_pill_bbox.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_pill_bbox.setToolTip("Toggle 3D Bounding Box & Dimensions (Shift+B)")
+        layout.addWidget(self.btn_pill_bbox)
+
         self.btn_pill_focus = QPushButton("Focus (F)")
         self.btn_pill_focus.setProperty("pill", True)
         self.btn_pill_focus.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -340,6 +356,20 @@ class MainWindow(QMainWindow):
         self.act_gizmo.toggled.connect(self.viewport.set_show_gizmo)
         menu_view.addAction(self.act_gizmo)
 
+        self.act_wireframe = QAction("🕸️ &Wireframe Overlay", self, checkable=True)
+        self.act_wireframe.setChecked(False)
+        self.act_wireframe.setShortcut(QKeySequence(Qt.Key.Key_W))
+        self.act_wireframe.setStatusTip("Toggle wireframe mesh overlay on top of shaded model (W)")
+        self.act_wireframe.toggled.connect(self.viewport.set_wireframe_mode)
+        menu_view.addAction(self.act_wireframe)
+
+        self.act_bbox = QAction("📦 &Bounding Box & Dimensions", self, checkable=True)
+        self.act_bbox.setChecked(False)
+        self.act_bbox.setShortcuts([QKeySequence("Shift+B"), QKeySequence(Qt.Key.Key_O)])
+        self.act_bbox.setStatusTip("Toggle 3D bounding box cage and real-time dimensions HUD (Shift+B / O)")
+        self.act_bbox.toggled.connect(self.viewport.set_show_bbox)
+        menu_view.addAction(self.act_bbox)
+
         menu_view.addSeparator()
 
         # Up Vector Submenu
@@ -441,6 +471,13 @@ class MainWindow(QMainWindow):
         self.act_xray.toggled.connect(self._on_menu_xray_toggled)
         menu_skel.addAction(self.act_xray)
 
+        self.act_gimbal = QAction("🔄 3D &FK Rotation Gimbal", self, checkable=True)
+        self.act_gimbal.setChecked(True)
+        self.act_gimbal.setShortcut(QKeySequence(Qt.Key.Key_R))
+        self.act_gimbal.setStatusTip("Toggle interactive 3D rotation gimbal rings on selected bone (R)")
+        self.act_gimbal.toggled.connect(self.viewport.set_show_fk_gimbal)
+        menu_skel.addAction(self.act_gimbal)
+
         menu_skel.addSeparator()
 
         act_reset_bind = QAction("&Reset Bind Pose", self)
@@ -470,6 +507,16 @@ class MainWindow(QMainWindow):
         self.btn_pill_grid.toggled.connect(self.act_grid.setChecked)
         self.btn_pill_rig.toggled.connect(self.act_bones.setChecked)
         self.btn_pill_xray.toggled.connect(self.act_xray.setChecked)
+        self.btn_pill_wireframe.toggled.connect(self.act_wireframe.setChecked)
+        self.act_wireframe.toggled.connect(self.btn_pill_wireframe.setChecked)
+        self.viewport.wireframe_toggled.connect(self.btn_pill_wireframe.setChecked)
+        self.viewport.wireframe_toggled.connect(self.act_wireframe.setChecked)
+
+        self.btn_pill_bbox.toggled.connect(self.act_bbox.setChecked)
+        self.act_bbox.toggled.connect(self.btn_pill_bbox.setChecked)
+        self.viewport.bbox_toggled.connect(self.btn_pill_bbox.setChecked)
+        self.viewport.bbox_toggled.connect(self.act_bbox.setChecked)
+
         self.btn_pill_focus.clicked.connect(self.focus_selection)
 
         # Viewport signals
@@ -508,6 +555,11 @@ class MainWindow(QMainWindow):
 
         # Direct 3D Bone Picking signal
         self.viewport.bone_picked.connect(self._on_viewport_bone_picked)
+
+        # 3D Viewport FK Gimbal Rotation sync
+        self.viewport.bone_fk_rotated.connect(self._on_viewport_bone_fk_rotated)
+        self.viewport.gimbal_toggled.connect(self.act_gimbal.setChecked)
+
 
         # Measurement Tool signals
         self.btn_pill_measure.toggled.connect(self.viewport.set_measure_mode)
@@ -551,6 +603,23 @@ class MainWindow(QMainWindow):
             self.tabs.setCurrentWidget(self.skeleton_panel)
         self.skeleton_panel.select_bone_by_id(bone_id)
 
+    def _on_viewport_bone_fk_rotated(self, bone_id: int, rx: float, ry: float, rz: float) -> None:
+        """Synchronize real-time 3D viewport gimbal drag rotation with FK sliders & Transform Inspector."""
+        self.skeleton_panel.slider_rx.blockSignals(True)
+        self.skeleton_panel.slider_ry.blockSignals(True)
+        self.skeleton_panel.slider_rz.blockSignals(True)
+        self.skeleton_panel.slider_rx.setValue(int(round(rx)))
+        self.skeleton_panel.slider_ry.setValue(int(round(ry)))
+        self.skeleton_panel.slider_rz.setValue(int(round(rz)))
+        self.skeleton_panel.lbl_rx_val.setText(f"{int(round(rx))}°")
+        self.skeleton_panel.lbl_ry_val.setText(f"{int(round(ry))}°")
+        self.skeleton_panel.lbl_rz_val.setText(f"{int(round(rz))}°")
+        self.skeleton_panel.slider_rx.blockSignals(False)
+        self.skeleton_panel.slider_ry.blockSignals(False)
+        self.skeleton_panel.slider_rz.blockSignals(False)
+        self.skeleton_panel._update_transform_readouts()
+
+
     # -------------------------------------------------------------------------
     # Theme Engine Control (Dark Mode / Light Mode)
     # -------------------------------------------------------------------------
@@ -568,6 +637,12 @@ class MainWindow(QMainWindow):
 
         # Update 3D OpenGL Viewport background and ground grid colors
         self.viewport.set_theme_colors(palette.viewport_bg_rgb, palette.grid_line_rgb)
+
+        # Theme sync for wireframe line color
+        if palette.is_dark:
+            self.viewport.render_options.wireframe_color = (0.42, 0.68, 0.95, 0.70)
+        else:
+            self.viewport.render_options.wireframe_color = (0.18, 0.24, 0.38, 0.80)
 
         # Sync Header Toggle Button & Menu Actions
         if palette.is_dark:
@@ -840,10 +915,13 @@ class MainWindow(QMainWindow):
             "<tr><td><b>A / Shift+F</b></td><td>Frame Entire 3D Model</td></tr>"
             "<tr><td><b>Home</b></td><td>Reset Camera to Home Position</td></tr>"
             "<tr><td><b>1 · 2 · 3 · 4</b></td><td>Shading: Textured · Base · Weight Heatmap · Unlit</td></tr>"
+            "<tr><td><b>W</b></td><td>Toggle Wireframe Mesh Overlay</td></tr>"
+            "<tr><td><b>Shift+B / O</b></td><td>Toggle 3D Bounding Box & Dimensions HUD</td></tr>"
             "<tr><td><b>M</b></td><td>Toggle 3D Measurement Mode (Click 2 points to measure)</td></tr>"
             "<tr><td><b>G</b></td><td>Toggle Ground Grid</td></tr>"
             "<tr><td><b>B</b></td><td>Toggle Skeleton Bones Overlay</td></tr>"
             "<tr><td><b>X</b></td><td>Toggle Skeleton X-Ray Mode</td></tr>"
+            "<tr><td><b>R</b></td><td>Toggle 3D FK Rotation Gimbal (Drag rings to rotate selected bone)</td></tr>"
             "<tr><td><b>Ctrl+R</b></td><td>Reset Skeleton Bind Pose</td></tr>"
             "<tr><td><b>Ctrl+T</b></td><td>Switch Dark Mode / Light Mode</td></tr>"
             "<tr><td><b>Ctrl+O</b></td><td>Open 3D Asset File</td></tr>"

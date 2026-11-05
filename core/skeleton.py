@@ -235,6 +235,10 @@ class Skeleton:
     def get_bone(self, bone_id: int) -> Optional[BoneNode]:
         return self.bone_by_id.get(bone_id)
 
+    def find_bone_by_id(self, bone_id: int) -> Optional[BoneNode]:
+        return self.bone_by_id.get(bone_id)
+
+
     def get_selected_bone(self) -> Optional[BoneNode]:
         return self.bone_by_id.get(self.selected_bone_id)
 

@@ -52,6 +52,7 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
 )
 import glm
+from core.bounding_box import BoundingBoxInfo
 
 from core.material import vec3_to_hex, hex_to_vec3
 from ui.style import ThemeManager, ThemePalette
@@ -1541,3 +1542,169 @@ class MeasurementHUDCard(QWidget):
 
 
 
+
+
+class BoundingBoxHUDCard(QWidget):
+    """
+    Sleek floating HUD card displaying real-time 3D Bounding Box dimensions (Width, Height, Depth, Volume).
+    """
+    close_requested = pyqtSignal()
+
+    def __init__(self, parent: QWidget):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setMouseTracking(True)
+        self.hide()
+
+        self._bbox_info: Optional[BoundingBoxInfo] = None
+        self._opacity: float = 0.0
+        self._btn_close_rect = QRectF()
+        self._is_close_hovered: bool = False
+
+        self._anim = QVariantAnimation(self)
+        self._anim.setDuration(220)
+        self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._anim.valueChanged.connect(self._on_anim_step)
+        self._anim.finished.connect(self._on_anim_finished)
+
+    def set_bbox_info(self, info: Optional[BoundingBoxInfo]) -> None:
+        self._bbox_info = info
+        self._update_size_and_position()
+        self.update()
+
+    def show_card(self) -> None:
+        self.show()
+        self._anim.stop()
+        self._anim.setStartValue(self._opacity)
+        self._anim.setEndValue(1.0)
+        self._anim.start()
+
+    def hide_card(self) -> None:
+        self._anim.stop()
+        self._anim.setStartValue(self._opacity)
+        self._anim.setEndValue(0.0)
+        self._anim.start()
+
+    def _on_anim_step(self, value) -> None:
+        self._opacity = float(value)
+        self._update_size_and_position()
+        self.update()
+
+    def _on_anim_finished(self) -> None:
+        if self._opacity <= 0.01:
+            self.hide()
+
+    def _update_size_and_position(self) -> None:
+        parent = self.parentWidget()
+        if not parent:
+            return
+        w = 340
+        h = 58
+        self.resize(w, h)
+        slide_offset = int((1.0 - self._opacity) * 10.0)
+        self.move(18, 18 - slide_offset)
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            pos = event.position()
+            if self._btn_close_rect.contains(pos):
+                self.close_requested.emit()
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        pos = event.position()
+        was_close = self._is_close_hovered
+        self._is_close_hovered = self._btn_close_rect.contains(pos)
+        if was_close != self._is_close_hovered:
+            self.update()
+        if self._is_close_hovered:
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
+        else:
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+        super().mouseMoveEvent(event)
+
+    def paintEvent(self, event) -> None:
+        if self._opacity <= 0.01:
+            return
+
+        p = ThemeManager.palette()
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setOpacity(self._opacity)
+
+        w = float(self.width())
+        h = float(self.height())
+        r = QRectF(1.0, 1.0, w - 2.0, h - 2.0)
+
+        # Background card with subtle glassmorphic outline
+        bg = QColor(p.card_bg)
+        bg.setAlpha(240)
+        painter.setBrush(bg)
+        painter.setPen(QPen(QColor(p.card_border), 1.2))
+        painter.drawRoundedRect(r, 10.0, 10.0)
+
+        # Header Title: 📦 BOUNDING BOX DIMENSIONS
+        font_title = QFont(self.font())
+        font_title.setPixelSize(10)
+        font_title.setWeight(QFont.Weight.Bold)
+        painter.setFont(font_title)
+        painter.setPen(QColor(p.text_secondary))
+        title_rect = QRectF(14.0, 7.0, 200.0, 16.0)
+        painter.drawText(title_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, "📦 BOUNDING BOX DIMENSIONS")
+
+        # Close button (top right)
+        self._btn_close_rect = QRectF(w - 26.0, 6.0, 18.0, 18.0)
+        if self._is_close_hovered:
+            painter.setBrush(QColor('#FF4A6E'))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawRoundedRect(self._btn_close_rect, 4.0, 4.0)
+            painter.setPen(QColor('#FFFFFF'))
+        else:
+            painter.setPen(QColor(p.text_secondary))
+        font_btn = QFont(self.font())
+        font_btn.setPixelSize(10)
+        font_btn.setWeight(QFont.Weight.Bold)
+        painter.setFont(font_btn)
+        painter.drawText(self._btn_close_rect, Qt.AlignmentFlag.AlignCenter, "✕")
+
+        # Dimensions row: W (X), H (Y), D (Z)
+        if self._bbox_info and self._bbox_info.is_valid:
+            sx = self._bbox_info.width
+            sy = self._bbox_info.height
+            sz = self._bbox_info.depth
+
+            font_dim = QFont(self.font())
+            font_dim.setPixelSize(12)
+            font_dim.setWeight(QFont.Weight.Bold)
+            painter.setFont(font_dim)
+
+            # X: Red/Coral
+            painter.setPen(QColor('#FF5C5C'))
+            painter.drawText(QRectF(14.0, 27.0, 85.0, 22.0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, f"W: {sx:.2f}m")
+
+            # Y: Emerald Green
+            painter.setPen(QColor('#4ADE80'))
+            painter.drawText(QRectF(102.0, 27.0, 85.0, 22.0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, f"H: {sy:.2f}m")
+
+            # Z: Sky Blue
+            painter.setPen(QColor('#38BDF8'))
+            painter.drawText(QRectF(190.0, 27.0, 85.0, 22.0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, f"D: {sz:.2f}m")
+
+            # Volume pill (right)
+            font_vol = QFont(self.font())
+            font_vol.setPixelSize(9)
+            font_vol.setWeight(QFont.Weight.Medium)
+            painter.setFont(font_vol)
+            painter.setPen(QColor(p.text_secondary))
+            vol_str = f"{self._bbox_info.volume:.2f}m³"
+            painter.drawText(QRectF(w - 75.0, 27.0, 60.0, 22.0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, vol_str)
+        else:
+            font_dim = QFont(self.font())
+            font_dim.setPixelSize(11)
+            painter.setFont(font_dim)
+            painter.setPen(QColor(p.text_secondary))
+            painter.drawText(QRectF(14.0, 27.0, 250.0, 22.0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, "No active model bounds")
+
+        painter.end()

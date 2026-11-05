@@ -31,6 +31,10 @@ from core.math_utils import (
 )
 from core.scene_loader import SceneData, SubMeshData
 from core.camera import ArcballCamera
+from core.bounding_box import compute_scene_bounds, generate_bbox_cage_lines, BoundingBoxInfo
+from core.gimbal import generate_single_ring_mesh
+
+
 
 
 @dataclass
@@ -44,6 +48,14 @@ class RenderOptions:
     active_bone_id: int = 0
     bg_color: Tuple[float, float, float] = (0.085, 0.082, 0.115)
     grid_color: Tuple[float, float, float] = (0.34, 0.33, 0.43)
+    show_wireframe: bool = False
+    wireframe_color: Tuple[float, float, float, float] = (0.42, 0.68, 0.95, 0.70)
+    show_bbox: bool = False
+    active_gimbal_axis: Optional[str] = None
+    show_fk_gimbal: bool = True
+
+
+
 
 
 @dataclass
@@ -93,12 +105,26 @@ class GLRenderer:
         self.ring_vao, self.ring_vbo = self._create_gimbal_ring_geometry()
         self.gizmo_vao, self.gizmo_vbo = self._create_gizmo_geometry()
 
+        # Dedicated 3-Axis Interactive FK Rotation Rings
+        self.gimbal_x_vao, self.gimbal_x_vbo = self._create_single_ring_geometry("X")
+        self.gimbal_y_vao, self.gimbal_y_vbo = self._create_single_ring_geometry("Y")
+        self.gimbal_z_vao, self.gimbal_z_vbo = self._create_single_ring_geometry("Z")
+
+
         # Dynamic 3D measurement line VAO & VBO
         self.measure_line_vbo: moderngl.Buffer = self.ctx.buffer(reserve=2 * 6 * 4)
         self.measure_line_vao: moderngl.VertexArray = self.ctx.vertex_array(
             self.gizmo_prog,
             [(self.measure_line_vbo, "3f 3f", "in_position", "in_color")],
         )
+
+        # Dynamic 3D bounding box cage line VAO & VBO (12 edges + 24 corner bracket lines)
+        self.bbox_vbo: moderngl.Buffer = self.ctx.buffer(reserve=128 * 6 * 4)
+        self.bbox_vao: moderngl.VertexArray = self.ctx.vertex_array(
+            self.gizmo_prog,
+            [(self.bbox_vbo, "3f 3f", "in_position", "in_color")],
+        )
+
 
         # Dummy 1x1 white texture for untextured meshes
         self.dummy_texture: moderngl.Texture = self.ctx.texture((1, 1), 4, b"\xff\xff\xff\xff")
@@ -151,6 +177,14 @@ class GLRenderer:
         vbo = self.ctx.buffer(ring_data.tobytes())
         vao = self.ctx.vertex_array(self.bone_prog, [(vbo, "3f 3f", "in_position", "in_normal")])
         return vao, vbo
+
+    def _create_single_ring_geometry(self, axis: str) -> Tuple[moderngl.VertexArray, moderngl.Buffer]:
+        """Upload individual single-axis 3D rotation ring geometry (X, Y, or Z)."""
+        ring_data = generate_single_ring_mesh(axis=axis, radius=1.0, tube_radius=0.045, num_segments=48)
+        vbo = self.ctx.buffer(ring_data.tobytes())
+        vao = self.ctx.vertex_array(self.bone_prog, [(vbo, "3f 3f", "in_position", "in_normal")])
+        return vao, vbo
+
 
     def _create_gizmo_geometry(self) -> Tuple[moderngl.VertexArray, moderngl.Buffer]:
         """Upload 3D coordinate axis lines for all 6 directions (+X/-X, +Y/-Y, +Z/-Z)."""
@@ -319,6 +353,10 @@ class GLRenderer:
         if options.show_skeleton and scene and scene.skeleton.has_bones:
             self._render_skeleton_overlay(camera, view_mat, proj_mat, scene, options, model_matrix=model_matrix)
 
+        # 3.5 Render 3D Bounding Box Dimensions Cage (if enabled)
+        if options.show_bbox and scene:
+            self._render_bounding_box_cage(camera, view_mat, proj_mat, model_matrix, scene)
+
         # 4. Render 3D Measurement Overlay (Point markers & connecting 3D line)
         if measure_points and (measure_points[0] is not None or measure_points[1] is not None):
             self._render_measurement_overlay(
@@ -428,6 +466,38 @@ class GLRenderer:
             else:
                 gpu_sub.vao.render(moderngl.TRIANGLES, vertices=sub.vertex_count)
 
+        # Wireframe Overlay Pass (if enabled)
+        if options.show_wireframe:
+            self.ctx.wireframe = True
+            # Push wireframe lines forward in z-buffer to completely eliminate z-fighting
+            self.ctx.polygon_offset = (-1.5, -2.0)
+            self.ctx.enable(moderngl.BLEND)
+            self.ctx.blend_func = (moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA)
+
+            prog["u_mode"].value = 3  # Unlit flat shading
+            prog["u_base_color"].value = options.wireframe_color[:3]
+            prog["u_opacity"].value = float(options.wireframe_color[3])
+            prog["u_has_texture"].value = 0
+            self.dummy_texture.use(location=0)
+
+            for gpu_sub in self.gpu_submeshes:
+                sub = gpu_sub.submesh
+                if not sub.visible or sub.vertex_count == 0:
+                    continue
+
+                prog["u_is_skinned"].value = 1 if (sub.has_bones and scene.skeleton.has_bones) else 0
+                prog["u_model"].write(glm_to_bytes(model_matrix * sub.node_transform))
+
+                if gpu_sub.ibo is not None:
+                    gpu_sub.vao.render(moderngl.TRIANGLES, vertices=len(sub.indices))
+                else:
+                    gpu_sub.vao.render(moderngl.TRIANGLES, vertices=sub.vertex_count)
+
+            # Restore default solid polygon rasterization mode
+            self.ctx.wireframe = False
+            self.ctx.polygon_offset = (0.0, 0.0)
+
+
     def _render_skeleton_overlay(
         self,
         camera: ArcballCamera,
@@ -510,11 +580,37 @@ class GLRenderer:
             if is_sel:
                 prog["u_bone_color"].value = col_selected_joint
                 prog["u_is_selected"].value = 1
-                # Selected joint gets both the center sphere and the enlarged gimbal ring
+                # Center joint sphere
                 self.joint_vao.render(moderngl.TRIANGLES)
-                ring_m = glm.translate(glm.mat4(1.0), j_pos) * glm.scale(glm.mat4(1.0), glm.vec3(j_rad * 1.5))
-                prog["u_model"].write(glm_to_bytes(model_matrix * ring_m))
-                self.ring_vao.render(moderngl.TRIANGLES)
+
+                if options.show_fk_gimbal:
+                    # 3D Viewport Interactive Rotation Gimbal (X-Red, Y-Green, Z-Blue)
+                    gimbal_scale = max(j_rad * 3.5, cam_dist * 0.08)
+                    ring_m = glm.translate(glm.mat4(1.0), j_pos) * glm.scale(glm.mat4(1.0), glm.vec3(gimbal_scale))
+                    prog["u_model"].write(glm_to_bytes(model_matrix * ring_m))
+
+                    # Ring X (Pitch): Red or Active Highlight
+                    is_x = (options.active_gimbal_axis == "X")
+                    prog["u_bone_color"].value = (1.0, 0.92, 0.15, 1.0) if is_x else (1.0, 0.28, 0.28, 0.92)
+                    prog["u_is_selected"].value = 1 if is_x else 0
+                    self.gimbal_x_vao.render(moderngl.TRIANGLES)
+
+                    # Ring Y (Yaw): Green or Active Highlight
+                    is_y = (options.active_gimbal_axis == "Y")
+                    prog["u_bone_color"].value = (1.0, 0.92, 0.15, 1.0) if is_y else (0.28, 0.95, 0.38, 0.92)
+                    prog["u_is_selected"].value = 1 if is_y else 0
+                    self.gimbal_y_vao.render(moderngl.TRIANGLES)
+
+                    # Ring Z (Roll): Blue or Active Highlight
+                    is_z = (options.active_gimbal_axis == "Z")
+                    prog["u_bone_color"].value = (1.0, 0.92, 0.15, 1.0) if is_z else (0.28, 0.68, 1.0, 0.92)
+                    prog["u_is_selected"].value = 1 if is_z else 0
+                    self.gimbal_z_vao.render(moderngl.TRIANGLES)
+                else:
+                    ring_m = glm.translate(glm.mat4(1.0), j_pos) * glm.scale(glm.mat4(1.0), glm.vec3(j_rad * 1.5))
+                    prog["u_model"].write(glm_to_bytes(model_matrix * ring_m))
+                    self.ring_vao.render(moderngl.TRIANGLES)
+
             elif is_leaf:
                 # Terminal leaf joint: render Unreal Engine style circular gimbal ring
                 prog["u_bone_color"].value = col_leaf_ring
@@ -648,3 +744,38 @@ class GLRenderer:
 
         # Restore standard depth test
         self.ctx.enable(moderngl.DEPTH_TEST)
+
+    def _render_bounding_box_cage(
+        self,
+        camera: ArcballCamera,
+        view_mat: glm.mat4,
+        proj_mat: glm.mat4,
+        model_matrix: Optional[glm.mat4],
+        scene: SceneData,
+    ) -> None:
+        """Render 3D architectural bounding box cage with corner brackets around the model."""
+        bbox = compute_scene_bounds(scene, model_matrix)
+        if not bbox.is_valid:
+            return
+
+        lines = generate_bbox_cage_lines(bbox)
+        if len(lines) == 0:
+            return
+
+        data_bytes = lines.tobytes()
+        if len(data_bytes) > self.bbox_vbo.size:
+            self.bbox_vbo.orphan(len(data_bytes))
+        self.bbox_vbo.write(data_bytes)
+
+        self.ctx.enable(moderngl.DEPTH_TEST)
+        self.ctx.depth_func = "<="
+        self.ctx.enable(moderngl.BLEND)
+        self.ctx.blend_func = (moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA)
+
+        prog = self.gizmo_prog
+        prog["u_view"].write(glm_to_bytes(view_mat))
+        prog["u_proj"].write(glm_to_bytes(proj_mat))
+        prog["u_model"].write(glm_to_bytes(glm.mat4(1.0)))
+
+        self.bbox_vao.render(moderngl.LINES, vertices=len(lines))
+
