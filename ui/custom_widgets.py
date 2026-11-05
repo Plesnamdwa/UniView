@@ -1270,6 +1270,7 @@ class MeasurementHUDCard(QWidget):
     """
     clear_requested = pyqtSignal()
     close_requested = pyqtSignal()
+    snap_toggled = pyqtSignal(bool)
 
     def __init__(self, parent: QWidget):
         super().__init__(parent)
@@ -1283,8 +1284,11 @@ class MeasurementHUDCard(QWidget):
         self._has_points: bool = False
         self._opacity: float = 0.0
 
+        self._snap_enabled: bool = True
+        self._btn_snap_rect = QRectF()
         self._btn_clear_rect = QRectF()
         self._btn_close_rect = QRectF()
+        self._is_snap_hovered: bool = False
         self._is_clear_hovered: bool = False
         self._is_close_hovered: bool = False
 
@@ -1293,6 +1297,14 @@ class MeasurementHUDCard(QWidget):
         self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
         self._anim.valueChanged.connect(self._on_anim_step)
         self._anim.finished.connect(self._on_anim_finished)
+
+    def is_snap_enabled(self) -> bool:
+        """Return True if vertex snapping is active for measurements."""
+        return self._snap_enabled
+
+    def set_snap_enabled(self, enabled: bool) -> None:
+        self._snap_enabled = enabled
+        self.update()
 
     def set_measuring_state(
         self,
@@ -1342,7 +1354,7 @@ class MeasurementHUDCard(QWidget):
         if not parent:
             return
 
-        w = 320 if self._distance is not None else 285
+        w = 385 if self._distance is not None else 330
         h = 38
         self.resize(w, h)
 
@@ -1353,6 +1365,12 @@ class MeasurementHUDCard(QWidget):
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
             pos = event.position()
+            if self._btn_snap_rect.contains(pos):
+                self._snap_enabled = not self._snap_enabled
+                self.snap_toggled.emit(self._snap_enabled)
+                self.update()
+                event.accept()
+                return
             if self._btn_clear_rect.contains(pos):
                 self.clear_requested.emit()
                 event.accept()
@@ -1365,13 +1383,19 @@ class MeasurementHUDCard(QWidget):
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
         pos = event.position()
+        was_snap = self._is_snap_hovered
         was_clear = self._is_clear_hovered
         was_close = self._is_close_hovered
+        self._is_snap_hovered = self._btn_snap_rect.contains(pos)
         self._is_clear_hovered = self._btn_clear_rect.contains(pos)
         self._is_close_hovered = self._btn_close_rect.contains(pos)
-        if was_clear != self._is_clear_hovered or was_close != self._is_close_hovered:
+        if (
+            was_snap != self._is_snap_hovered
+            or was_clear != self._is_clear_hovered
+            or was_close != self._is_close_hovered
+        ):
             self.update()
-        if self._is_clear_hovered or self._is_close_hovered:
+        if self._is_snap_hovered or self._is_clear_hovered or self._is_close_hovered:
             self.setCursor(Qt.CursorShape.PointingHandCursor)
         else:
             self.setCursor(Qt.CursorShape.ArrowCursor)
@@ -1407,18 +1431,38 @@ class MeasurementHUDCard(QWidget):
             # Left section: Distance icon & text
             dist_str = f"⤢ {self._distance:.3f}"
             painter.setPen(QColor(p.accent))
-            dist_rect = QRectF(16.0, 0.0, 110.0, h)
+            dist_rect = QRectF(16.0, 0.0, 105.0, h)
             painter.drawText(dist_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, dist_str)
 
             # Divider line
             painter.setPen(QPen(QColor(p.card_border), 1.0))
-            painter.drawLine(int(132), int(8), int(132), int(h - 8))
+            painter.drawLine(int(125), int(8), int(125), int(h - 8))
 
             # Middle section: Angle icon & text
             angle_str = f"📐 {self._angle:.1f}°"
             painter.setPen(QColor(p.success if hasattr(p, 'success') else p.accent))
-            angle_rect = QRectF(142.0, 0.0, 95.0, h)
+            angle_rect = QRectF(135.0, 0.0, 90.0, h)
             painter.drawText(angle_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, angle_str)
+
+            # Snap toggle button
+            btn_snap_x = w - 124.0
+            self._btn_snap_rect = QRectF(btn_snap_x, 7.0, 56.0, 24.0)
+            if self._snap_enabled:
+                painter.setBrush(QColor(p.accent_soft_bg))
+                painter.setPen(QPen(QColor(p.accent), 1.2))
+            else:
+                painter.setBrush(QColor(p.card_bg))
+                painter.setPen(QPen(QColor(p.card_border), 1.0))
+            if self._is_snap_hovered:
+                painter.setPen(QPen(QColor(p.accent), 1.8))
+            painter.drawRoundedRect(self._btn_snap_rect, 12.0, 12.0)
+
+            font_snap = QFont(self.font())
+            font_snap.setPixelSize(10)
+            font_snap.setWeight(QFont.Weight.Bold)
+            painter.setFont(font_snap)
+            painter.setPen(QColor(p.accent if self._snap_enabled else p.text_secondary))
+            painter.drawText(self._btn_snap_rect, Qt.AlignmentFlag.AlignCenter, "🧲 Snap")
 
             # Clear button
             btn_clear_x = w - 62.0
@@ -1447,13 +1491,33 @@ class MeasurementHUDCard(QWidget):
             painter.drawText(self._btn_close_rect, Qt.AlignmentFlag.AlignCenter, "✕")
 
         else:
+            # Snap toggle button
+            btn_snap_x = w - 96.0
+            self._btn_snap_rect = QRectF(btn_snap_x, 7.0, 56.0, 24.0)
+            if self._snap_enabled:
+                painter.setBrush(QColor(p.accent_soft_bg))
+                painter.setPen(QPen(QColor(p.accent), 1.2))
+            else:
+                painter.setBrush(QColor(p.card_bg))
+                painter.setPen(QPen(QColor(p.card_border), 1.0))
+            if self._is_snap_hovered:
+                painter.setPen(QPen(QColor(p.accent), 1.8))
+            painter.drawRoundedRect(self._btn_snap_rect, 12.0, 12.0)
+
+            font_snap = QFont(self.font())
+            font_snap.setPixelSize(10)
+            font_snap.setWeight(QFont.Weight.Bold)
+            painter.setFont(font_snap)
+            painter.setPen(QColor(p.accent if self._snap_enabled else p.text_secondary))
+            painter.drawText(self._btn_snap_rect, Qt.AlignmentFlag.AlignCenter, "🧲 Snap")
+
             # Guidance text
             font_txt = QFont(self.font())
             font_txt.setPixelSize(11)
             font_txt.setWeight(QFont.Weight.Medium)
             painter.setFont(font_txt)
             painter.setPen(QColor(p.text_primary))
-            text_rect = QRectF(18.0, 0.0, w - 50.0, h)
+            text_rect = QRectF(16.0, 0.0, btn_snap_x - 22.0, h)
             painter.drawText(text_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, f"📏 {self._state_text}")
 
             # Close button

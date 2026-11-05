@@ -27,7 +27,8 @@ from core.scene_loader import SceneData, SUPPORTED_EXTENSIONS
 from core.camera import ArcballCamera
 from core.renderer import GLRenderer, RenderOptions
 from core.math_utils import AABB
-from core.raycast import raycast_scene
+from core.raycast import raycast_scene, pick_bone_at_screen
+from core.gizmo import is_pos_in_gizmo_region, hit_test_gizmo_axis
 from ui.custom_widgets import (
     SegmentedControl,
     ToastNotification,
@@ -47,11 +48,13 @@ class GLViewport(QOpenGLWidget):
     render_mode_requested = pyqtSignal(int)
     up_vector_changed = pyqtSignal(str, bool)  # mode ('Y' or 'Z'), is_flipped
     measure_mode_toggled = pyqtSignal(bool)
+    bone_picked = pyqtSignal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAcceptDrops(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setMouseTracking(True)
 
         # Rendering and Camera State
         self.ctx: Optional[moderngl.Context] = None
@@ -410,15 +413,16 @@ class GLViewport(QOpenGLWidget):
         self.hud_measure.set_measuring_state(point_count=0)
         self.update()
 
-    def _on_measure_point_clicked(self, hit: glm.vec3) -> None:
-        """Handle 3D world hit point placement."""
+    def _on_measure_point_clicked(self, hit: glm.vec3, is_snapped: bool = False) -> None:
+        """Handle 3D world hit point placement with optional vertex snapping feedback."""
+        snap_badge = " (Vertex Snap)" if is_snapped else ""
         if self._measure_p1 is None:
             self._measure_p1 = hit
             self._measure_p2 = None
             self._measure_distance = None
             self._measure_angle = None
             self.hud_measure.set_measuring_state(point_count=1)
-            self.show_toast(f"📍 Point 1: ({hit.x:.2f}, {hit.y:.2f}, {hit.z:.2f})", kind="info")
+            self.show_toast(f"📍 Point 1{snap_badge}: ({hit.x:.2f}, {hit.y:.2f}, {hit.z:.2f})", kind="info")
         elif self._measure_p2 is None:
             self._measure_p2 = hit
             diff = self._measure_p2 - self._measure_p1
@@ -428,7 +432,7 @@ class GLViewport(QOpenGLWidget):
             self._measure_distance = dist
             self._measure_angle = angle_deg
             self.hud_measure.set_measuring_state(point_count=2, distance=dist, angle=angle_deg)
-            self.show_toast(f"📏 Distance: {dist:.3f} · Angle: {angle_deg:.1f}°", kind="success")
+            self.show_toast(f"📏 Distance: {dist:.3f} · Angle: {angle_deg:.1f}°{snap_badge}", kind="success")
         else:
             # 3rd click starts fresh measurement
             self._measure_p1 = hit
@@ -436,7 +440,7 @@ class GLViewport(QOpenGLWidget):
             self._measure_distance = None
             self._measure_angle = None
             self.hud_measure.set_measuring_state(point_count=1)
-            self.show_toast(f"📍 Point 1: ({hit.x:.2f}, {hit.y:.2f}, {hit.z:.2f})", kind="info")
+            self.show_toast(f"📍 Point 1{snap_badge}: ({hit.x:.2f}, {hit.y:.2f}, {hit.z:.2f})", kind="info")
 
         self.update()
 
@@ -449,6 +453,13 @@ class GLViewport(QOpenGLWidget):
         if event.button() == Qt.MouseButton.LeftButton:
             self._press_pos = event.pos()
             self._is_potential_click = True
+            # If clicking in the gizmo corner, don't start orbit
+            if self.render_options.show_gizmo and is_pos_in_gizmo_region(
+                float(event.pos().x()), float(event.pos().y()), float(self.height())
+            ):
+                self._is_orbiting = False
+                event.accept()
+                return
             # Do NOT orbit immediately so single clicks don't cause jitter
             self._is_orbiting = False
         elif event.button() in (Qt.MouseButton.RightButton, Qt.MouseButton.MiddleButton):
@@ -456,6 +467,17 @@ class GLViewport(QOpenGLWidget):
         event.accept()
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        # Hover cursor feedback (pointing hand over gizmo, crosshair in measure mode)
+        if not event.buttons():
+            if self.render_options.show_gizmo and is_pos_in_gizmo_region(
+                float(event.pos().x()), float(event.pos().y()), float(self.height())
+            ):
+                self.setCursor(Qt.CursorShape.PointingHandCursor)
+            elif self._is_measure_mode:
+                self.setCursor(Qt.CursorShape.CrossCursor)
+            else:
+                self.setCursor(Qt.CursorShape.ArrowCursor)
+
         if event.buttons() & Qt.MouseButton.LeftButton:
             dist = (event.pos() - self._press_pos).manhattanLength()
             if dist > 4:
@@ -478,18 +500,81 @@ class GLViewport(QOpenGLWidget):
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
             is_click = self._is_potential_click and ((event.pos() - self._press_pos).manhattanLength() <= 4)
-            if is_click and self._is_measure_mode:
-                # Discriminated single click inside Measure Mode: perform 3D raycast picking!
-                dpr = self.devicePixelRatio()
-                w = int(self.width() * dpr)
-                h = int(self.height() * dpr)
-                sx = float(event.pos().x() * dpr)
-                sy = float(event.pos().y() * dpr)
-                hit = raycast_scene(sx, sy, w, h, self.camera, self.scene_data, self.get_model_matrix())
-                if hit is not None:
-                    self._on_measure_point_clicked(hit)
-                else:
-                    self.show_toast("Raycast: missed model surface", kind="warning", duration_ms=1200)
+            if is_click:
+                # 1. Interactive Corner Gizmo: 1-click snap to standard Ortho/Axis views!
+                if self.render_options.show_gizmo:
+                    hit_gizmo = hit_test_gizmo_axis(
+                        mouse_x=float(event.pos().x()),
+                        mouse_y=float(event.pos().y()),
+                        viewport_h=float(self.height()),
+                        camera=self.camera,
+                    )
+                    if hit_gizmo is not None:
+                        axis_label, target_yaw, target_pitch, view_name = hit_gizmo
+                        self.camera.set_view_angles(target_yaw, target_pitch, animate=True)
+                        self.show_toast(f"🧭 {view_name}", kind="info")
+                        self.update()
+                        self._is_potential_click = False
+                        self._is_orbiting = False
+                        event.accept()
+                        return
+
+                # 2. 3D Measurement Point Picking
+                if self._is_measure_mode:
+                    dpr = self.devicePixelRatio()
+                    w = int(self.width() * dpr)
+                    h = int(self.height() * dpr)
+                    sx = float(event.pos().x() * dpr)
+                    sy = float(event.pos().y() * dpr)
+                    # Snap active if Shift/Ctrl is held, OR if HUD snap is enabled
+                    snap_active = bool(
+                        (event.modifiers() & (Qt.KeyboardModifier.ShiftModifier | Qt.KeyboardModifier.ControlModifier))
+                        or self.hud_measure.is_snap_enabled()
+                    )
+                    hit = raycast_scene(
+                        screen_x=sx,
+                        screen_y=sy,
+                        viewport_w=w,
+                        viewport_h=h,
+                        camera=self.camera,
+                        scene=self.scene_data,
+                        model_matrix=self.get_model_matrix(),
+                        snap_to_vertex=snap_active,
+                    )
+                    if hit is not None:
+                        self._on_measure_point_clicked(hit.point, hit.is_vertex_snapped)
+                    else:
+                        self.show_toast("Raycast: missed model surface", kind="warning", duration_ms=1200)
+
+                # 3. Direct 3D Bone Picking from viewport!
+                elif (
+                    self.render_options.show_skeleton
+                    and self.scene_data
+                    and self.scene_data.skeleton
+                    and self.scene_data.skeleton.has_bones
+                ):
+                    dpr = self.devicePixelRatio()
+                    w = int(self.width() * dpr)
+                    h = int(self.height() * dpr)
+                    sx = float(event.pos().x() * dpr)
+                    sy = float(event.pos().y() * dpr)
+                    model_scale = self.scene_data.scene_aabb.radius if self.scene_data.scene_aabb.is_valid else 1.0
+                    bone_id = pick_bone_at_screen(
+                        screen_x=sx,
+                        screen_y=sy,
+                        viewport_w=w,
+                        viewport_h=h,
+                        camera=self.camera,
+                        skeleton=self.scene_data.skeleton,
+                        model_matrix=self.get_model_matrix(),
+                        model_scale_hint=model_scale,
+                    )
+                    if bone_id is not None:
+                        bone = self.scene_data.skeleton.get_bone(bone_id)
+                        bone_name = bone.name if bone else f"Bone #{bone_id}"
+                        self.show_toast(f"🦴 Selected: {bone_name}", kind="info")
+                        self.bone_picked.emit(bone_id)
+                        self.update()
 
             self._is_potential_click = False
             self._is_orbiting = False

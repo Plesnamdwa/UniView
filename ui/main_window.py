@@ -506,6 +506,9 @@ class MainWindow(QMainWindow):
         self.btn_pill_up.clicked.connect(self._show_up_vector_popup)
         self.viewport.up_vector_changed.connect(self._on_up_vector_changed)
 
+        # Direct 3D Bone Picking signal
+        self.viewport.bone_picked.connect(self._on_viewport_bone_picked)
+
         # Measurement Tool signals
         self.btn_pill_measure.toggled.connect(self.viewport.set_measure_mode)
         self.viewport.measure_mode_toggled.connect(self.btn_pill_measure.setChecked)
@@ -541,6 +544,12 @@ class MainWindow(QMainWindow):
             self.act_up_y.setChecked(mode == "Y")
         if hasattr(self, "act_up_z"):
             self.act_up_z.setChecked(mode == "Z")
+
+    def _on_viewport_bone_picked(self, bone_id: int) -> None:
+        """Handle bone picked via direct 3D viewport raycast."""
+        if self.tabs.currentWidget() != self.skeleton_panel:
+            self.tabs.setCurrentWidget(self.skeleton_panel)
+        self.skeleton_panel.select_bone_by_id(bone_id)
 
     # -------------------------------------------------------------------------
     # Theme Engine Control (Dark Mode / Light Mode)

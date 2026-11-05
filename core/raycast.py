@@ -6,7 +6,8 @@ Used by UniView 3D Measurement Tool to accurately pick points on model surfaces.
 
 from __future__ import annotations
 import math
-from typing import Optional, Tuple
+from dataclasses import dataclass
+from typing import Optional, Tuple, List, Dict, Any
 import numpy as np
 import glm
 
@@ -82,16 +83,28 @@ def ray_intersect_aabb(
     return t_min if t_max >= 0.0 else None
 
 
+@dataclass
+class RaycastHit:
+    """Represents a 3D raycast hit point on model surface or ground grid."""
+    point: glm.vec3
+    is_vertex_snapped: bool = False
+
+    def __iter__(self):
+        yield self.point
+        yield self.is_vertex_snapped
+
+
 def ray_intersect_triangles_vectorized(
     ray_origin: np.ndarray,
     ray_dir: np.ndarray,
     vertices: np.ndarray,
     indices: Optional[np.ndarray],
-) -> Optional[float]:
+    snap_to_vertex: bool = False,
+) -> Optional[Tuple[float, Optional[np.ndarray]]]:
     """
     Vectorized Möller-Trumbore ray-triangle intersection over entire mesh using NumPy.
     Runs in < 5ms for tens of thousands of triangles.
-    Returns closest positive hit distance t or None.
+    Returns (closest_t, closest_vertex_coords or None).
     """
     if len(vertices) < 3:
         return None
@@ -141,6 +154,7 @@ def ray_intersect_triangles_vectorized(
     tvec = tvec[valid_u]
     inv_det = inv_det[valid_u]
     u = u[valid_u]
+    v0_u = v0_v[valid_u]
 
     qvec = np.cross(tvec, e1)
     v = np.einsum("ij,j->i", qvec, ray_dir) * inv_det
@@ -150,16 +164,37 @@ def ray_intersect_triangles_vectorized(
     if not np.any(valid_v):
         return None
 
+    e1 = e1[valid_v]
     e2 = e2[valid_v]
     qvec = qvec[valid_v]
     inv_det = inv_det[valid_v]
+    v0_final = v0_u[valid_v]
 
     t = np.einsum("ij,ij->i", e2, qvec) * inv_det
-    pos_t = t[t > 1e-4]
-    if len(pos_t) == 0:
+    pos_mask = t > 1e-4
+    if not np.any(pos_mask):
         return None
 
-    return float(np.min(pos_t))
+    pos_t = t[pos_mask]
+    min_i = int(np.argmin(pos_t))
+    best_t = float(pos_t[min_i])
+
+    if not snap_to_vertex:
+        return best_t, None
+
+    # Retrieve 3 vertices of hit triangle
+    hit_v0 = v0_final[pos_mask][min_i]
+    hit_v1 = hit_v0 + e1[pos_mask][min_i]
+    hit_v2 = hit_v0 + e2[pos_mask][min_i]
+
+    hit_pt = ray_origin + ray_dir * best_t
+    d0 = float(np.sum((hit_pt - hit_v0) ** 2))
+    d1 = float(np.sum((hit_pt - hit_v1) ** 2))
+    d2 = float(np.sum((hit_pt - hit_v2) ** 2))
+
+    cand_verts = [hit_v0, hit_v1, hit_v2]
+    best_v = cand_verts[int(np.argmin([d0, d1, d2]))]
+    return best_t, best_v
 
 
 def raycast_scene(
@@ -170,10 +205,12 @@ def raycast_scene(
     camera: ArcballCamera,
     scene: Optional[SceneData],
     model_matrix: Optional[glm.mat4] = None,
-) -> Optional[glm.vec3]:
+    snap_to_vertex: bool = False,
+) -> Optional[RaycastHit]:
     """
     Raycast from 2D viewport coordinates onto 3D scene geometry.
-    Returns exact 3D world hit point glm.vec3 or fallback ground plane intersection.
+    If `snap_to_vertex=True`, snaps the hit point to the closest triangle vertex.
+    Returns RaycastHit(point, is_vertex_snapped) or fallback ground plane intersection.
     """
     ray_origin, ray_dir = get_screen_ray(screen_x, screen_y, viewport_w, viewport_h, camera)
 
@@ -181,6 +218,7 @@ def raycast_scene(
         model_matrix = glm.mat4(1.0)
 
     closest_hit_world: Optional[glm.vec3] = None
+    closest_hit_snapped: bool = False
     min_dist_to_cam = float("inf")
 
     if scene and scene.submeshes:
@@ -213,9 +251,22 @@ def raycast_scene(
             orig_np = np.array([local_orig.x, local_orig.y, local_orig.z], dtype=np.float32)
             dir_np = np.array([local_dir.x, local_dir.y, local_dir.z], dtype=np.float32)
 
-            t_hit = ray_intersect_triangles_vectorized(orig_np, dir_np, verts_np, idx_np)
-            if t_hit is not None:
-                local_hit = local_orig + local_dir * t_hit
+            res = ray_intersect_triangles_vectorized(
+                orig_np,
+                dir_np,
+                verts_np,
+                idx_np,
+                snap_to_vertex=snap_to_vertex,
+            )
+            if res is not None:
+                t_hit, snap_v = res
+                if snap_to_vertex and snap_v is not None:
+                    local_hit = glm.vec3(float(snap_v[0]), float(snap_v[1]), float(snap_v[2]))
+                    is_snapped = True
+                else:
+                    local_hit = local_orig + local_dir * t_hit
+                    is_snapped = False
+
                 world_hit_v4 = sub_world_m * glm.vec4(local_hit, 1.0)
                 world_hit = glm.vec3(world_hit_v4) / (world_hit_v4.w if abs(world_hit_v4.w) > 1e-6 else 1.0)
 
@@ -223,9 +274,10 @@ def raycast_scene(
                 if dist_to_cam < min_dist_to_cam:
                     min_dist_to_cam = dist_to_cam
                     closest_hit_world = world_hit
+                    closest_hit_snapped = is_snapped
 
     if closest_hit_world is not None:
-        return closest_hit_world
+        return RaycastHit(point=closest_hit_world, is_vertex_snapped=closest_hit_snapped)
 
     # Fallback: Raycast against ground horizontal studio floor (Y = 0)
     if abs(ray_dir.y) > 1e-6:
@@ -235,6 +287,225 @@ def raycast_scene(
             # Bound within reasonable studio radius
             radius = scene.scene_aabb.radius * 4.0 if (scene and scene.scene_aabb.is_valid) else 100.0
             if math.hypot(ground_hit.x, ground_hit.z) <= radius:
-                return ground_hit
+                return RaycastHit(point=ground_hit, is_vertex_snapped=False)
 
+    return None
+
+
+# -------------------------------------------------------------------------
+# Ray-vs-Skeleton Picking (Joint Spheres & Bone Segment Capsules)
+# -------------------------------------------------------------------------
+
+_EPS = 1e-9
+
+
+def ray_intersect_sphere(
+    orig: glm.vec3,
+    dir: glm.vec3,
+    center: glm.vec3,
+    radius: float,
+) -> Optional[float]:
+    """Smallest positive hit distance t where ray R(t) = orig + t * dir reaches sphere, else None."""
+    if radius <= 0.0:
+        return None
+    oc = center - orig
+    a = float(glm.dot(dir, dir))
+    if a <= 0.0:
+        return None
+    b = float(glm.dot(oc, dir))
+    c = float(glm.dot(oc, oc)) - radius * radius
+    disc = b * b - a * c
+    if disc < -1e-6:
+        return None
+    if disc < 0.0:
+        disc = 0.0
+    sq = math.sqrt(disc)
+    t_near = (b - sq) / a
+    t_far = (b + sq) / a
+    if t_far <= _EPS:
+        return None
+    if t_near > _EPS:
+        return t_near
+    return _EPS
+
+
+def ray_intersect_capsule(
+    orig: glm.vec3,
+    dir: glm.vec3,
+    p1: glm.vec3,
+    p2: glm.vec3,
+    radius: float,
+) -> Optional[float]:
+    """Smallest positive hit distance t where ray intersects capsule around segment p1->p2."""
+    if radius <= 0.0:
+        return None
+    a_dir = float(glm.dot(dir, dir))
+    if a_dir <= 0.0:
+        return None
+
+    axis = p2 - p1
+    l2 = float(glm.dot(axis, axis))
+    if l2 <= _EPS * _EPS:
+        return ray_intersect_sphere(orig, dir, p1, radius)
+
+    l = math.sqrt(l2)
+    u = axis * (1.0 / l)
+
+    def sphere_interval(c: glm.vec3) -> Optional[Tuple[float, float]]:
+        oc = c - orig
+        b = float(glm.dot(oc, dir))
+        c_val = float(glm.dot(oc, oc)) - radius * radius
+        disc = b * b - a_dir * c_val
+        if disc < -1e-6:
+            return None
+        if disc < 0.0:
+            disc = 0.0
+        sq = math.sqrt(disc)
+        tn, tf = (b - sq) / a_dir, (b + sq) / a_dir
+        if tf <= _EPS:
+            return None
+        return (tn, tf)
+
+    s1 = sphere_interval(p1)
+    s2 = sphere_interval(p2)
+
+    o1 = orig - p1
+    du1 = float(glm.dot(o1, u))
+    du = float(glm.dot(dir, u))
+    w = float(glm.dot(o1, o1)) - du1 * du1 - radius * radius
+    x = float(glm.dot(dir, o1)) - du1 * du
+    y = a_dir - du * du
+
+    b_iv: Optional[Tuple[float, float]] = None
+    if y > _EPS:
+        disc = x * x - y * w
+        if disc >= -1e-6:
+            if disc < 0.0:
+                disc = 0.0
+            sq = math.sqrt(disc)
+            b_iv = ((-x - sq) / y, (-x + sq) / y)
+    else:
+        if abs(x) <= _EPS:
+            b_iv = None if w > 0.0 else (-float("inf"), float("inf"))
+        else:
+            tc = -w / (2.0 * x)
+            b_iv = (-float("inf"), tc) if x > 0.0 else (tc, float("inf"))
+
+    if b_iv is not None:
+        lo, hi = b_iv
+        if du > _EPS:
+            lo = max(lo, -du1 / du)
+            hi = min(hi, (l - du1) / du)
+        elif du < -_EPS:
+            lo = max(lo, (l - du1) / du)
+            hi = min(hi, -du1 / du)
+        else:
+            if not (0.0 <= du1 <= l):
+                b_iv = None
+        if b_iv is not None and lo <= hi:
+            b_iv = (lo, hi)
+        else:
+            b_iv = None
+
+    pieces = [iv for iv in (s1, s2, b_iv) if iv is not None]
+    if not pieces:
+        return None
+    a = min(iv[0] for iv in pieces)
+    b = max(iv[1] for iv in pieces)
+    if b <= 0.0:
+        return None
+    if a > _EPS:
+        return a
+    return _EPS
+
+
+def raycast_skeleton(
+    orig: glm.vec3,
+    dir: glm.vec3,
+    joints: List[Any],
+    segments: List[Any],
+    padding_scale: float = 1.4,
+    default_radius: float = 0.05,
+) -> Optional[Tuple[int, float]]:
+    """
+    Test 3D ray against skeleton joint spheres and bone segment capsules.
+    Returns (bone_id, hit_distance_t) for closest hit, or None.
+    """
+    padded: Dict[int, float] = {}
+    best_t: Optional[float] = None
+    best_bone: int = -1
+
+    # 1. Test Joint Spheres
+    for item in joints:
+        bone_id = item[0]
+        pos = item[1]
+        radius = float(item[2])
+        r = max(radius * padding_scale, default_radius * 0.4)
+        padded[bone_id] = r
+        t = ray_intersect_sphere(orig, dir, pos, r)
+        if t is not None and (best_t is None or t < best_t):
+            best_t, best_bone = t, bone_id
+
+    # 2. Test Bone Segments (Capsules)
+    for seg in segments:
+        bone_id = seg.bone_id
+        r = padded.get(bone_id, default_radius)
+        seg_len = float(glm.length(seg.tail_pos - seg.head_pos))
+        cap_r = max(r, seg_len * 0.12, default_radius * 0.6)
+        t = ray_intersect_capsule(orig, dir, seg.head_pos, seg.tail_pos, cap_r)
+        if t is not None and (best_t is None or t < best_t):
+            best_t, best_bone = t, bone_id
+
+    if best_t is None:
+        return None
+    return best_bone, best_t
+
+
+def pick_bone_at_screen(
+    screen_x: float,
+    screen_y: float,
+    viewport_w: int,
+    viewport_h: int,
+    camera: ArcballCamera,
+    skeleton: Any,
+    model_matrix: Optional[glm.mat4] = None,
+    model_scale_hint: float = 1.0,
+    padding_scale: float = 1.5,
+) -> Optional[int]:
+    """
+    Project 2D screen coordinate to 3D ray and hit-test against skeleton.
+    Returns clicked bone_id (int) or None.
+    """
+    if skeleton is None or not getattr(skeleton, "has_bones", False):
+        return None
+
+    ray_orig, ray_dir = get_screen_ray(screen_x, screen_y, viewport_w, viewport_h, camera)
+
+    # Transform ray into model local coordinate space (reversing Up Vector rotation)
+    if model_matrix is not None:
+        inv_m = glm.inverse(model_matrix)
+        local_orig_v4 = inv_m * glm.vec4(ray_orig, 1.0)
+        local_orig = glm.vec3(local_orig_v4) / (local_orig_v4.w if abs(local_orig_v4.w) > 1e-6 else 1.0)
+        local_dir = glm.normalize(glm.vec3(inv_m * glm.vec4(ray_dir, 0.0)))
+    else:
+        local_orig = ray_orig
+        local_dir = ray_dir
+
+    segments, joints = skeleton.extract_visual_primitives(
+        model_scale_hint=model_scale_hint,
+        camera_distance=camera.distance,
+    )
+
+    default_r = max(float(model_scale_hint) * 0.025, 0.02)
+    hit = raycast_skeleton(
+        local_orig,
+        local_dir,
+        joints,
+        segments,
+        padding_scale=padding_scale,
+        default_radius=default_r,
+    )
+
+    if hit is not None:
+        return hit[0]
     return None

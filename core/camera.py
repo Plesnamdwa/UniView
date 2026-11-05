@@ -60,6 +60,11 @@ class ArcballCamera:
         self._end_target: glm.vec3 = glm.vec3(self.target)
         self._start_distance: float = self.distance
         self._end_distance: float = self.distance
+        self._start_yaw: float = self.yaw_deg
+        self._end_yaw: float = self.yaw_deg
+        self._start_pitch: float = self.pitch_deg
+        self._end_pitch: float = self.pitch_deg
+        self._animate_angles: bool = False
 
     @property
     def is_animating(self) -> bool:
@@ -175,10 +180,12 @@ class ArcballCamera:
             self._end_target = glm.vec3(new_target)
             self._start_distance = self.distance
             self._end_distance = optimal_dist
+            self._animate_angles = False
             self._anim_elapsed = 0.0
             self._animating = True
         else:
             self._animating = False
+            self._animate_angles = False
             self.target = glm.vec3(new_target)
             self.distance = optimal_dist
 
@@ -189,14 +196,43 @@ class ArcballCamera:
             self._end_target = glm.vec3(self._home_target)
             self._start_distance = self.distance
             self._end_distance = self._home_distance
+            self._start_pitch = self.pitch_deg
+            self._end_pitch = self._home_pitch
+            diff_yaw = ((self._home_yaw - self.yaw_deg + 180.0) % 360.0) - 180.0
+            self._start_yaw = self.yaw_deg
+            self._end_yaw = self.yaw_deg + diff_yaw
+            self._animate_angles = True
             self._anim_elapsed = 0.0
             self._animating = True
         else:
             self._animating = False
+            self._animate_angles = False
             self.target = glm.vec3(self._home_target)
             self.distance = self._home_distance
             self.yaw_deg = self._home_yaw
             self.pitch_deg = self._home_pitch
+
+    def set_view_angles(self, target_yaw: float, target_pitch: float, animate: bool = True) -> None:
+        """Smoothly interpolate camera yaw and pitch angles (e.g., for Ortho / Axis views)."""
+        target_pitch = float(glm.clamp(target_pitch, -89.0, 89.0))
+        if animate:
+            self._start_target = glm.vec3(self.target)
+            self._end_target = glm.vec3(self.target)
+            self._start_distance = self.distance
+            self._end_distance = self.distance
+            self._start_pitch = self.pitch_deg
+            self._end_pitch = target_pitch
+            diff_yaw = ((target_yaw - self.yaw_deg + 180.0) % 360.0) - 180.0
+            self._start_yaw = self.yaw_deg
+            self._end_yaw = self.yaw_deg + diff_yaw
+            self._animate_angles = True
+            self._anim_elapsed = 0.0
+            self._animating = True
+        else:
+            self._animating = False
+            self._animate_angles = False
+            self.pitch_deg = target_pitch
+            self.yaw_deg = math.fmod(target_yaw, 360.0)
 
     def update_animation(self, dt: float) -> bool:
         """
@@ -213,10 +249,17 @@ class ArcballCamera:
 
         self.target = glm.mix(self._start_target, self._end_target, ease_t)
         self.distance = float(self._start_distance + (self._end_distance - self._start_distance) * ease_t)
+        if self._animate_angles:
+            self.yaw_deg = float(self._start_yaw + (self._end_yaw - self._start_yaw) * ease_t)
+            self.pitch_deg = float(self._start_pitch + (self._end_pitch - self._start_pitch) * ease_t)
 
         if t >= 1.0:
             self.target = glm.vec3(self._end_target)
             self.distance = self._end_distance
+            if self._animate_angles:
+                self.yaw_deg = math.fmod(self._end_yaw, 360.0)
+                self.pitch_deg = self._end_pitch
+                self._animate_angles = False
             self._animating = False
 
         return True

@@ -8,21 +8,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ## [2.0.0] - 2026-11-05
 
 ### 🌟 Added
-- **Unreal Engine Style Skeleton & Terminal Rings**:
+- **Unreal Engine Style Skeleton & Direct 3D Bone Picking**:
+  - Direct 3D Bone Picking from Viewport: clicking any joint sphere or octahedral bone segment directly in 3D selects the bone in hierarchy, updates the transform inspector, FK sliders, and weight heatmap.
   - Re-architected anatomical octahedral bone connectivity (`core/skeleton.py`) so bone cones strictly connect from parent to real child joints.
   - Eliminated artificial spike projections on leaf bones (fingertips, top of skull, toes).
   - Added 3D orthogonal circular gimbal rings (`core/math_utils.py` & `core/renderer.py`) for all terminal joints and highlighted active bones.
-- **Up-Vector Orientation Lerp (Y-Up / Z-Up / Flip)**:
+- **Up-Vector Orientation Lerp & Interactive Corner Gizmo**:
+  - Interactive Corner Orientation Gizmo (`core/gizmo.py`): 1-click snapping to standard Orthographic views (Front +Z, Back -Z, Right +X, Left -X, Top +Y, Bottom -Y) with shortest-path camera slerp interpolation and hover cursor feedback.
   - 1-click smooth transition between OpenGL / glTF standard (`Y-Up`), Unreal Engine / 3ds Max / Blender standard (`Z-Up`), and vertical inversion (`Flip`).
   - Implemented 60 FPS quaternion slerp easing (`OutCubic` curve $\approx 0.38\text{s}$) for silky smooth model rotation.
   - Studio floor ground grid stays locked at $Y=0$, while the avatar rotates in world space.
   - Camera automatically calculates new bounding box (`AABB.transformed`) and re-frames the avatar smoothly.
   - Top header pill dropdown (`📐 Y-Up`) and `View -> Up Vector Orientation` menu.
-- **3D Interactive Measurement Tool (Distance & Angle)**:
+- **3D Interactive Measurement Tool with Vertex Snapping**:
   - Added vectorized *Möller-Trumbore* 3D raycasting (`core/raycast.py`) achieving $< 5\text{ms}$ intersection checks over tens of thousands of triangles.
+  - **🧲 Vertex Snapping Mode**: Locks measurement hit points to the exact coordinates of the closest mesh polygon vertex for CAD precision (HUD toggle button & `Shift`/`Ctrl` modifier).
   - **Intelligent Click vs Drag Discrimination**: Distinguishes between mouse drag ($> 4\text{px}$) to orbit camera normally and single click ($\le 4\text{px}$) to accurately drop measurement points on polygon surfaces.
   - Visual 3D markers with coral/mint spheres, gimbal rings, and golden connecting 3D connector rod.
-  - Floating pill HUD card displaying live Euclidean distance and inclination angle relative to ground floor, with 1-click clear (`↺`) and dismiss (`✕`).
+  - Floating pill HUD card displaying live Euclidean distance, inclination angle, `🧲 Snap` toggle, with 1-click clear (`↺`) and dismiss (`✕`).
   - Keyboard shortcut `M` and top header pill button (`📏 Measure`).
 
 ### 🐛 Fixed

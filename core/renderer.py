@@ -153,19 +153,31 @@ class GLRenderer:
         return vao, vbo
 
     def _create_gizmo_geometry(self) -> Tuple[moderngl.VertexArray, moderngl.Buffer]:
-        """Upload 3D coordinate axis lines (X=Red, Y=Green, Z=Blue)."""
+        """Upload 3D coordinate axis lines for all 6 directions (+X/-X, +Y/-Y, +Z/-Z)."""
         axis_len = 1.0
+        neg_len = 0.55
         # Line pairs: (px, py, pz, r, g, b)
         data = np.array([
-            # X Axis (Red)
-            0.0, 0.0, 0.0,  1.0, 0.15, 0.15,
-            axis_len, 0.0, 0.0,  1.0, 0.15, 0.15,
-            # Y Axis (Green)
-            0.0, 0.0, 0.0,  0.2, 0.95, 0.2,
-            0.0, axis_len, 0.0,  0.2, 0.95, 0.2,
-            # Z Axis (Blue)
-            0.0, 0.0, 0.0,  0.25, 0.55, 1.0,
-            0.0, 0.0, axis_len,  0.25, 0.55, 1.0,
+            # +X Axis (Bright Coral Red)
+            0.0, 0.0, 0.0,  1.0, 0.28, 0.28,
+            axis_len, 0.0, 0.0,  1.0, 0.28, 0.28,
+            # -X Axis (Subtle Muted Red)
+            0.0, 0.0, 0.0,  0.55, 0.22, 0.22,
+            -neg_len, 0.0, 0.0,  0.55, 0.22, 0.22,
+
+            # +Y Axis (Bright Emerald Green)
+            0.0, 0.0, 0.0,  0.25, 0.95, 0.35,
+            0.0, axis_len, 0.0,  0.25, 0.95, 0.35,
+            # -Y Axis (Subtle Muted Green)
+            0.0, 0.0, 0.0,  0.20, 0.50, 0.25,
+            0.0, -neg_len, 0.0,  0.20, 0.50, 0.25,
+
+            # +Z Axis (Bright Sky Blue)
+            0.0, 0.0, 0.0,  0.25, 0.65, 1.0,
+            0.0, 0.0, axis_len,  0.25, 0.65, 1.0,
+            # -Z Axis (Subtle Muted Blue)
+            0.0, 0.0, 0.0,  0.22, 0.35, 0.60,
+            0.0, 0.0, -neg_len,  0.22, 0.35, 0.60,
         ], dtype=np.float32)
 
         vbo = self.ctx.buffer(data.tobytes())
@@ -546,7 +558,7 @@ class GLRenderer:
         prog["u_view"].write(glm_to_bytes(rot_view))
         prog["u_model"].write(glm_to_bytes(glm.mat4(1.0)))
 
-        self.gizmo_vao.render(moderngl.LINES, vertices=6)
+        self.gizmo_vao.render(moderngl.LINES, vertices=12)
 
         # Reset viewport
         self.ctx.viewport = (0, 0, viewport_w, viewport_h)
