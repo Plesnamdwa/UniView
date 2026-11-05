@@ -56,12 +56,19 @@ UniView solves this by providing a clean, distraction-free environment:
 ### 🌟 Minimalist "Juicy Simple" UI
 - **Dual Studio Themes**: Seamlessly switch between **Obsidian Dark** (`#111018`) and **Alabaster Light** (`#F3F4F9`) with `Ctrl+T`.
 - **Expanding Label Stadium Bar**: The active inspector tab grows into an accent pill while its label smoothly slides out at 60 FPS, shrinking inactive tabs to clean monoline vector icons.
+- **Top Header Pill Toolbar**: 1-click toggles for *Grid*, *Rig*, *X-Ray*, *Focus (F)*, *📐 Up-Vector*, *📏 Measure*, and *🌙 Theme*.
 - **Floating Shading HUD**: A semi-transparent floating pill bar sits right on the 3D viewport for instant shading swaps (*Textured*, *Base Color*, *Heatmap*, *Unlit*).
-- **Responsive Micro-Feedback**: Floating toast notifications keep you informed of actions (e.g., *"Loaded character.fbx"*, *"Texture relinked"*, *"Bind pose restored"*).
+- **Responsive Micro-Feedback**: Floating toast notifications keep you informed of actions (e.g., *"Loaded character.fbx"*, *"Texture relinked"*, *"Up Vector: Z-Axis Up"*, *"Distance: 133.782"*).
 - **Drag-and-Drop Viewport**: Drag any 3D asset over the viewport to trigger a sleek dashed overlay card for immediate loading.
 
 ### 📐 High-Performance 3D Engine
 - **ModernGL & Arcball Camera**: Smooth, hardware-accelerated OpenGL 3.3+ rendering with intuitive Orbit, Pan, and Zoom controls.
+- **Up-Vector Orientation Lerp (Y-Up / Z-Up / Flip)**: Smooth quaternion slerp interpolation ($\approx 0.38\text{s}$) rotates models seamlessly between OpenGL/glTF (Y-Up) and Unreal/Blender (Z-Up) coordinate systems while keeping the ground studio grid locked at $Y=0$. Camera re-frames automatically.
+- **📏 3D Interactive Measurement Tool**:
+  - Click any 2 points on the model surface to measure 3D Euclidean distance and inclination angle.
+  - Fast vectorized *Möller-Trumbore* raycasting ($< 5\text{ms}$ for tens of thousands of triangles).
+  - **Intelligent Click vs Drag Discrimination**: Click-and-drag orbits the camera normally; quick single-clicks drop measurement points without accidental misfires.
+  - Floating pill HUD displays live measurements (`⤢ Distance` | `📐 Angle` | `↺` Reset | `✕` Close).
 - **Standard 3D Artist Focus (`F`)**: Press `F` or double-click any sub-mesh, bone, or material to instantly zoom and center the camera on it without toggling visibility.
 - **Frame-Rate Throttling**: Status bar camera coordinate emission is throttled (~12 Hz) to prevent Qt layout overhead during rapid 60 FPS camera rotation.
 
@@ -78,6 +85,7 @@ UniView solves this by providing a clean, distraction-free environment:
    - Real-time search filter.
    - Custom vector action icons: **Isolate** (`⛶`) to frame and focus a single sub-mesh, and **Eye** (`👁`) to toggle individual visibility.
 4. **🦴 Skeleton (Rig & Armature Inspector)**:
+   - **Unreal Engine Style Terminal Rings**: Bone cones only connect to real anatomical children—no stray cones piercing into thin air. Terminal leaf joints (fingertips, top of skull, toes) feature clean 3D circular gimbal rings.
    - Full parent-child bone hierarchy tree with instant search.
    - **X-Ray Overlay**: View bones through mesh geometry.
    - **Vertex Weight Heatmap**: Colorizes mesh vertices based on active bone influence (Blue $\rightarrow$ Cyan $\rightarrow$ Green $\rightarrow$ Yellow $\rightarrow$ Red).
@@ -97,6 +105,7 @@ UniView solves this by providing a clean, distraction-free environment:
 | **`A` / `Shift+F`** | Frame entire 3D model |
 | **`Home`** | Reset camera to initial framing position |
 | **`1` · `2` · `3` · `4`** | Shading modes: *Textured*, *Base Color*, *Heatmap*, *Unlit* |
+| **`M`** | Toggle 3D Measurement Tool (Distance & Angle) |
 | **`G`** | Toggle Ground Grid |
 | **`B`** | Toggle Skeleton Bones overlay |
 | **`X`** | Toggle Skeleton X-Ray mode |

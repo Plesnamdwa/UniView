@@ -346,33 +346,40 @@ class Skeleton:
                     avg_local_y = sum(forward_y_vals) / len(forward_y_vals)
                     tail = head + y_dir * (avg_local_y * y_scale * 0.85)
 
-            # 3. Fallback for leaf bones without `_end` node or root hubs without axial child
+            # 3. Check if this is a leaf bone (terminal joint without child continuation)
+            is_leaf = False
             if tail is None or glm.length(tail - head) <= 1e-4:
-                if bone.parent is not None:
-                    p_dist = glm.length(head - bone.parent.world_position)
-                    tip_len = glm.clamp(p_dist * 0.55, scale_ref * 0.015, scale_ref * 0.08)
-                else:
-                    tip_len = default_leaf_len
-                tail = head + y_dir * float(tip_len)
+                is_leaf = True
+                tail = None
 
-            seg_len = float(glm.length(tail - head))
-            if seg_len > 1e-4:
-                segments.append(
-                    BoneSegment(
-                        bone_id=bone.id,
-                        bone_name=bone.name,
-                        head_pos=head,
-                        tail_pos=tail,
-                        is_selected=is_sel,
+            # Only append bone segment if there is a real child/continuation joint
+            if tail is not None:
+                seg_len = float(glm.length(tail - head))
+                if seg_len > 1e-4:
+                    segments.append(
+                        BoneSegment(
+                            bone_id=bone.id,
+                            bone_name=bone.name,
+                            head_pos=head,
+                            tail_pos=tail,
+                            is_selected=is_sel,
+                        )
                     )
-                )
+            else:
+                seg_len = default_leaf_len
 
-            # Joint sphere radius proportional to this bone's own length & zoom
+            # Joint marker radius proportional to bone scale & camera zoom
             min_j_rad = scale_ref * 0.0028
-            max_j_rad = scale_ref * 0.0110
-            base_j_rad = float(glm.clamp(seg_len * 0.075, min_j_rad, max_j_rad)) * zoom_factor
+            max_j_rad = scale_ref * 0.0120
+            if is_leaf and bone.parent is not None:
+                p_dist = float(glm.length(head - bone.parent.world_position))
+                base_j_rad = float(glm.clamp(p_dist * 0.12, min_j_rad * 1.2, max_j_rad * 1.5)) * zoom_factor
+            else:
+                base_j_rad = float(glm.clamp(seg_len * 0.075, min_j_rad, max_j_rad)) * zoom_factor
+
             if is_sel:
                 base_j_rad *= 1.25
-            joints.append((bone.id, head, base_j_rad, is_sel))
+
+            joints.append((bone.id, head, base_j_rad, is_sel, is_leaf))
 
         return segments, joints

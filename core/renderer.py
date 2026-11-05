@@ -27,6 +27,7 @@ from core.math_utils import (
     generate_octahedral_bone_mesh,
     generate_bone_align_matrix,
     generate_joint_sphere_mesh,
+    generate_gimbal_rings_mesh,
 )
 from core.scene_loader import SceneData, SubMeshData
 from core.camera import ArcballCamera
@@ -89,7 +90,15 @@ class GLRenderer:
         self.grid_vao: moderngl.VertexArray = self._create_grid_geometry()
         self.bone_vao, self.bone_vbo = self._create_octahedral_bone_geometry()
         self.joint_vao, self.joint_vbo = self._create_joint_sphere_geometry()
+        self.ring_vao, self.ring_vbo = self._create_gimbal_ring_geometry()
         self.gizmo_vao, self.gizmo_vbo = self._create_gizmo_geometry()
+
+        # Dynamic 3D measurement line VAO & VBO
+        self.measure_line_vbo: moderngl.Buffer = self.ctx.buffer(reserve=2 * 6 * 4)
+        self.measure_line_vao: moderngl.VertexArray = self.ctx.vertex_array(
+            self.gizmo_prog,
+            [(self.measure_line_vbo, "3f 3f", "in_position", "in_color")],
+        )
 
         # Dummy 1x1 white texture for untextured meshes
         self.dummy_texture: moderngl.Texture = self.ctx.texture((1, 1), 4, b"\xff\xff\xff\xff")
@@ -133,6 +142,13 @@ class GLRenderer:
         """Upload unit joint sphere geometry."""
         sphere_data = generate_joint_sphere_mesh(radius=1.0, rings=8, sectors=12)
         vbo = self.ctx.buffer(sphere_data.tobytes())
+        vao = self.ctx.vertex_array(self.bone_prog, [(vbo, "3f 3f", "in_position", "in_normal")])
+        return vao, vbo
+
+    def _create_gimbal_ring_geometry(self) -> Tuple[moderngl.VertexArray, moderngl.Buffer]:
+        """Upload Unreal Engine style 3D gimbal ring geometry for terminal & selected joints."""
+        ring_data = generate_gimbal_rings_mesh(radius=1.0, tube_radius=0.075, num_segments=24)
+        vbo = self.ctx.buffer(ring_data.tobytes())
         vao = self.ctx.vertex_array(self.bone_prog, [(vbo, "3f 3f", "in_position", "in_normal")])
         return vao, vbo
 
@@ -246,10 +262,15 @@ class GLRenderer:
         camera: ArcballCamera,
         scene: Optional[SceneData],
         options: RenderOptions,
+        model_matrix: Optional[glm.mat4] = None,
+        measure_points: Optional[Tuple[Optional[glm.vec3], Optional[glm.vec3]]] = None,
     ) -> None:
-        """Render complete viewport frame: background, grid, meshes, skeleton, and gizmo."""
+        """Render complete viewport frame: background, grid, meshes, skeleton, measurement line, and gizmo."""
         if viewport_w <= 0 or viewport_h <= 0:
             return
+
+        if model_matrix is None:
+            model_matrix = glm.mat4(1.0)
 
         self.ctx.viewport = (0, 0, viewport_w, viewport_h)
         self.ctx.enable(moderngl.DEPTH_TEST | moderngl.BLEND)
@@ -273,20 +294,26 @@ class GLRenderer:
         view_bytes = glm_to_bytes(view_mat)
         proj_bytes = glm_to_bytes(proj_mat)
 
-        # 1. Render Ground Grid
+        # 1. Render Ground Grid (stays fixed as the horizontal studio floor)
         if options.show_grid:
             self._render_ground_grid(camera, view_bytes, proj_bytes, scene, options)
 
-        # 2. Render 3D Sub-Meshes
+        # 2. Render 3D Sub-Meshes (oriented by model_matrix for smooth Up-Vector transition)
         if scene and self.gpu_submeshes:
             self._sync_material_textures(scene)
-            self._render_submeshes(camera, view_bytes, proj_bytes, scene, options)
+            self._render_submeshes(camera, view_bytes, proj_bytes, scene, options, model_matrix=model_matrix)
 
-        # 3. Render Skeletal Bone & Joint Overlay
+        # 3. Render Skeletal Bone & Joint Overlay (oriented by model_matrix)
         if options.show_skeleton and scene and scene.skeleton.has_bones:
-            self._render_skeleton_overlay(camera, view_mat, proj_mat, scene, options)
+            self._render_skeleton_overlay(camera, view_mat, proj_mat, scene, options, model_matrix=model_matrix)
 
-        # 4. Render Corner Orientation XYZ Gizmo
+        # 4. Render 3D Measurement Overlay (Point markers & connecting 3D line)
+        if measure_points and (measure_points[0] is not None or measure_points[1] is not None):
+            self._render_measurement_overlay(
+                camera, view_mat, proj_mat, measure_points[0], measure_points[1], scene
+            )
+
+        # 5. Render Corner Orientation XYZ Gizmo
         if options.show_gizmo:
             self._render_corner_gizmo(viewport_w, viewport_h, camera)
 
@@ -333,7 +360,11 @@ class GLRenderer:
         proj_bytes: bytes,
         scene: SceneData,
         options: RenderOptions,
+        model_matrix: Optional[glm.mat4] = None,
     ) -> None:
+        if model_matrix is None:
+            model_matrix = glm.mat4(1.0)
+
         self.ctx.enable(moderngl.DEPTH_TEST)
         self.ctx.depth_func = "<="
         # Render two-sided so single-sided cloth, cape, pocket, and hair surfaces are always visible
@@ -359,7 +390,7 @@ class GLRenderer:
                 continue
 
             prog["u_is_skinned"].value = 1 if (sub.has_bones and scene.skeleton.has_bones) else 0
-            prog["u_model"].write(glm_to_bytes(sub.node_transform))
+            prog["u_model"].write(glm_to_bytes(model_matrix * sub.node_transform))
 
             # Retrieve assigned MaterialSlot
             mat_idx = sub.material_index
@@ -392,8 +423,12 @@ class GLRenderer:
         proj_mat: glm.mat4,
         scene: SceneData,
         options: RenderOptions,
+        model_matrix: Optional[glm.mat4] = None,
     ) -> None:
         """Render 3D octahedral bones and joint points with X-Ray bypass."""
+        if model_matrix is None:
+            model_matrix = glm.mat4(1.0)
+
         if options.xray_skeleton:
             # Bypass depth test so bones shine cleanly through the mesh geometry
             self.ctx.disable(moderngl.DEPTH_TEST)
@@ -430,7 +465,7 @@ class GLRenderer:
                 seg.tail_pos,
                 max_thickness_len=radius * 0.14,
             )
-            prog["u_model"].write(glm_to_bytes(align_m))
+            prog["u_model"].write(glm_to_bytes(model_matrix * align_m))
 
             if seg.is_selected:
                 prog["u_bone_color"].value = col_selected_bone
@@ -444,25 +479,45 @@ class GLRenderer:
         # 2. Render Joint Spheres (individually scaled per bone length & camera distance)
         col_regular_joint = (0.25, 0.88, 1.0, 0.85)
         col_selected_joint = (1.0, 0.88, 0.15, 1.0)
+        col_leaf_ring = (0.35, 0.95, 0.88, 0.92)  # Mint/electric cyan for Unreal style terminal rings
 
         for item in joints:
-            if len(item) == 4:
+            if len(item) == 5:
+                b_id, j_pos, j_rad, is_sel, is_leaf = item
+            elif len(item) == 4:
                 b_id, j_pos, j_rad, is_sel = item
+                is_leaf = False
             else:
                 b_id, j_pos, is_sel = item
                 j_rad = max(radius * 0.008, 0.01)
+                is_leaf = False
 
             trans_m = glm.translate(glm.mat4(1.0), j_pos) * glm.scale(glm.mat4(1.0), glm.vec3(j_rad))
-            prog["u_model"].write(glm_to_bytes(trans_m))
+            prog["u_model"].write(glm_to_bytes(model_matrix * trans_m))
 
             if is_sel:
                 prog["u_bone_color"].value = col_selected_joint
                 prog["u_is_selected"].value = 1
+                # Selected joint gets both the center sphere and the enlarged gimbal ring
+                self.joint_vao.render(moderngl.TRIANGLES)
+                ring_m = glm.translate(glm.mat4(1.0), j_pos) * glm.scale(glm.mat4(1.0), glm.vec3(j_rad * 1.5))
+                prog["u_model"].write(glm_to_bytes(model_matrix * ring_m))
+                self.ring_vao.render(moderngl.TRIANGLES)
+            elif is_leaf:
+                # Terminal leaf joint: render Unreal Engine style circular gimbal ring
+                prog["u_bone_color"].value = col_leaf_ring
+                prog["u_is_selected"].value = 0
+                ring_m = glm.translate(glm.mat4(1.0), j_pos) * glm.scale(glm.mat4(1.0), glm.vec3(j_rad * 1.4))
+                prog["u_model"].write(glm_to_bytes(model_matrix * ring_m))
+                self.ring_vao.render(moderngl.TRIANGLES)
+                # Plus a tiny center joint sphere
+                center_m = glm.translate(glm.mat4(1.0), j_pos) * glm.scale(glm.mat4(1.0), glm.vec3(j_rad * 0.45))
+                prog["u_model"].write(glm_to_bytes(model_matrix * center_m))
+                self.joint_vao.render(moderngl.TRIANGLES)
             else:
                 prog["u_bone_color"].value = col_regular_joint
                 prog["u_is_selected"].value = 0
-
-            self.joint_vao.render(moderngl.TRIANGLES)
+                self.joint_vao.render(moderngl.TRIANGLES)
 
         # Restore depth test state
         self.ctx.enable(moderngl.DEPTH_TEST)
@@ -495,4 +550,89 @@ class GLRenderer:
 
         # Reset viewport
         self.ctx.viewport = (0, 0, viewport_w, viewport_h)
+        self.ctx.enable(moderngl.DEPTH_TEST)
+
+    def _render_measurement_overlay(
+        self,
+        camera: ArcballCamera,
+        view_mat: glm.mat4,
+        proj_mat: glm.mat4,
+        p1: Optional[glm.vec3],
+        p2: Optional[glm.vec3],
+        scene: Optional[SceneData],
+    ) -> None:
+        """Render 3D measurement points and connecting line/rod in the viewport."""
+        if p1 is None and p2 is None:
+            return
+
+        view_bytes = glm_to_bytes(view_mat)
+        proj_bytes = glm_to_bytes(proj_mat)
+
+        # X-Ray style overlay: disable depth test so measurements are never hidden inside geometry
+        self.ctx.disable(moderngl.DEPTH_TEST)
+        self.ctx.enable(moderngl.CULL_FACE)
+        self.ctx.cull_face = "back"
+
+        radius = scene.scene_aabb.radius if (scene and scene.scene_aabb.is_valid) else 2.0
+        marker_rad = max(radius * 0.016, 0.03)
+
+        prog = self.bone_prog
+        prog["u_view"].write(view_bytes)
+        prog["u_proj"].write(proj_bytes)
+        prog["u_cam_pos"].value = (camera.position.x, camera.position.y, camera.position.z)
+
+        # 1. Render Point 1 marker (Neon Coral / Orange)
+        if p1 is not None:
+            prog["u_bone_color"].value = (1.0, 0.40, 0.12, 1.0)
+            prog["u_is_selected"].value = 1
+            m1 = glm.translate(glm.mat4(1.0), p1) * glm.scale(glm.mat4(1.0), glm.vec3(marker_rad))
+            prog["u_model"].write(glm_to_bytes(m1))
+            self.joint_vao.render(moderngl.TRIANGLES)
+
+            # Outer ring marker
+            prog["u_bone_color"].value = (0.2, 0.95, 0.85, 0.95)
+            prog["u_is_selected"].value = 0
+            m1_ring = glm.translate(glm.mat4(1.0), p1) * glm.scale(glm.mat4(1.0), glm.vec3(marker_rad * 1.5))
+            prog["u_model"].write(glm_to_bytes(m1_ring))
+            self.ring_vao.render(moderngl.TRIANGLES)
+
+        # 2. Render Point 2 marker (Vivid Mint / Cyan)
+        if p2 is not None:
+            prog["u_bone_color"].value = (0.12, 0.95, 0.82, 1.0)
+            prog["u_is_selected"].value = 1
+            m2 = glm.translate(glm.mat4(1.0), p2) * glm.scale(glm.mat4(1.0), glm.vec3(marker_rad))
+            prog["u_model"].write(glm_to_bytes(m2))
+            self.joint_vao.render(moderngl.TRIANGLES)
+
+            # Outer ring marker
+            prog["u_bone_color"].value = (1.0, 0.85, 0.2, 0.95)
+            prog["u_is_selected"].value = 0
+            m2_ring = glm.translate(glm.mat4(1.0), p2) * glm.scale(glm.mat4(1.0), glm.vec3(marker_rad * 1.5))
+            prog["u_model"].write(glm_to_bytes(m2_ring))
+            self.ring_vao.render(moderngl.TRIANGLES)
+
+        # 3. Render 3D connecting rod & line segment
+        if p1 is not None and p2 is not None:
+            dist = glm.length(p2 - p1)
+            if dist > 1e-4:
+                align_m = generate_bone_align_matrix(p1, p2, max_thickness_len=marker_rad * 0.35)
+                prog["u_model"].write(glm_to_bytes(align_m))
+                prog["u_bone_color"].value = (1.0, 0.90, 0.30, 0.95)  # Vivid Golden Yellow connector
+                prog["u_is_selected"].value = 1
+                self.bone_vao.render(moderngl.TRIANGLES, vertices=24)
+
+            # High-visibility line segment
+            line_data = np.array([
+                p1.x, p1.y, p1.z,  1.0, 0.45, 0.15,
+                p2.x, p2.y, p2.z,  0.15, 0.95, 0.82,
+            ], dtype=np.float32)
+            self.measure_line_vbo.write(line_data.tobytes())
+
+            gprog = self.gizmo_prog
+            gprog["u_view"].write(view_bytes)
+            gprog["u_proj"].write(proj_bytes)
+            gprog["u_model"].write(glm_to_bytes(glm.mat4(1.0)))
+            self.measure_line_vao.render(moderngl.LINES, vertices=2)
+
+        # Restore standard depth test
         self.ctx.enable(moderngl.DEPTH_TEST)

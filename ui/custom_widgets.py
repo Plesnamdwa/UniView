@@ -1260,4 +1260,220 @@ class ViewportLoadingOverlay(QWidget):
         painter.end()
 
 
+class MeasurementHUDCard(QWidget):
+    """
+    Juicy floating HUD pill card displayed during 3D Measure mode.
+    Displays:
+    - Interactive live guidance ("Click surface for Point 1", "Point 1 placed")
+    - Precise 3D distance (<o---o> 39.755) and inclination angle (📐 13.2°)
+    - Clear and dismiss buttons
+    """
+    clear_requested = pyqtSignal()
+    close_requested = pyqtSignal()
+
+    def __init__(self, parent: QWidget):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setMouseTracking(True)
+        self.hide()
+
+        self._distance: Optional[float] = None
+        self._angle: Optional[float] = None
+        self._state_text: str = "Click surface to place Point 1"
+        self._has_points: bool = False
+        self._opacity: float = 0.0
+
+        self._btn_clear_rect = QRectF()
+        self._btn_close_rect = QRectF()
+        self._is_clear_hovered: bool = False
+        self._is_close_hovered: bool = False
+
+        self._anim = QVariantAnimation(self)
+        self._anim.setDuration(200)
+        self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._anim.valueChanged.connect(self._on_anim_step)
+        self._anim.finished.connect(self._on_anim_finished)
+
+    def set_measuring_state(
+        self,
+        point_count: int,
+        distance: Optional[float] = None,
+        angle: Optional[float] = None,
+    ) -> None:
+        self._distance = distance
+        self._angle = angle
+        self._has_points = (point_count > 0)
+
+        if point_count == 0:
+            self._state_text = "Click surface to place Point 1"
+        elif point_count == 1:
+            self._state_text = "Point 1 placed · Click surface for Point 2"
+        else:
+            self._state_text = ""
+
+        self._update_size_and_position()
+        self.update()
+
+    def show_card(self) -> None:
+        self.show()
+        self.raise_()
+        self._anim.stop()
+        self._anim.setStartValue(self._opacity)
+        self._anim.setEndValue(1.0)
+        self._anim.start()
+
+    def hide_card(self) -> None:
+        self._anim.stop()
+        self._anim.setStartValue(self._opacity)
+        self._anim.setEndValue(0.0)
+        self._anim.start()
+
+    def _on_anim_step(self, val) -> None:
+        self._opacity = float(val)
+        self._update_size_and_position()
+        self.update()
+
+    def _on_anim_finished(self) -> None:
+        if self._opacity <= 0.02:
+            self.hide()
+
+    def _update_size_and_position(self) -> None:
+        parent = self.parentWidget()
+        if not parent:
+            return
+
+        w = 320 if self._distance is not None else 285
+        h = 38
+        self.resize(w, h)
+
+        base_y = parent.height() - h - 22
+        slide_offset = int((1.0 - self._opacity) * 12.0)
+        self.move((parent.width() - w) // 2, base_y + slide_offset)
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            pos = event.position()
+            if self._btn_clear_rect.contains(pos):
+                self.clear_requested.emit()
+                event.accept()
+                return
+            if self._btn_close_rect.contains(pos):
+                self.close_requested.emit()
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        pos = event.position()
+        was_clear = self._is_clear_hovered
+        was_close = self._is_close_hovered
+        self._is_clear_hovered = self._btn_clear_rect.contains(pos)
+        self._is_close_hovered = self._btn_close_rect.contains(pos)
+        if was_clear != self._is_clear_hovered or was_close != self._is_close_hovered:
+            self.update()
+        if self._is_clear_hovered or self._is_close_hovered:
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
+        else:
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+        super().mouseMoveEvent(event)
+
+    def paintEvent(self, event) -> None:
+        if self._opacity <= 0.01:
+            return
+
+        p = ThemeManager.palette()
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setOpacity(self._opacity)
+
+        w = float(self.width())
+        h = float(self.height())
+        r = QRectF(1.0, 1.0, w - 2.0, h - 2.0)
+
+        # Background capsule
+        bg = QColor(p.card_bg)
+        bg.setAlpha(245)
+        painter.setBrush(bg)
+        painter.setPen(QPen(QColor(p.accent), 1.5))
+        painter.drawRoundedRect(r, h * 0.5, h * 0.5)
+
+        if self._distance is not None and self._angle is not None:
+            # Mode with 2 points measured: show Distance and Angle side-by-side
+            font_val = QFont(self.font())
+            font_val.setPixelSize(12)
+            font_val.setWeight(QFont.Weight.Bold)
+            painter.setFont(font_val)
+
+            # Left section: Distance icon & text
+            dist_str = f"⤢ {self._distance:.3f}"
+            painter.setPen(QColor(p.accent))
+            dist_rect = QRectF(16.0, 0.0, 110.0, h)
+            painter.drawText(dist_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, dist_str)
+
+            # Divider line
+            painter.setPen(QPen(QColor(p.card_border), 1.0))
+            painter.drawLine(int(132), int(8), int(132), int(h - 8))
+
+            # Middle section: Angle icon & text
+            angle_str = f"📐 {self._angle:.1f}°"
+            painter.setPen(QColor(p.success if hasattr(p, 'success') else p.accent))
+            angle_rect = QRectF(142.0, 0.0, 95.0, h)
+            painter.drawText(angle_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, angle_str)
+
+            # Clear button
+            btn_clear_x = w - 62.0
+            self._btn_clear_rect = QRectF(btn_clear_x, 6.0, 24.0, 26.0)
+            if self._is_clear_hovered:
+                painter.setBrush(QColor(p.accent_soft_bg))
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.drawRoundedRect(self._btn_clear_rect, 6.0, 6.0)
+            painter.setPen(QColor(p.text_secondary))
+            font_btn = QFont(self.font())
+            font_btn.setPixelSize(12)
+            font_btn.setWeight(QFont.Weight.Bold)
+            painter.setFont(font_btn)
+            painter.drawText(self._btn_clear_rect, Qt.AlignmentFlag.AlignCenter, "↺")
+
+            # Close / Dismiss button
+            btn_close_x = w - 34.0
+            self._btn_close_rect = QRectF(btn_close_x, 6.0, 24.0, 26.0)
+            if self._is_close_hovered:
+                painter.setBrush(QColor(p.danger if hasattr(p, 'danger') else '#FF4A6E'))
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.drawRoundedRect(self._btn_close_rect, 6.0, 6.0)
+                painter.setPen(QColor('#FFFFFF'))
+            else:
+                painter.setPen(QColor(p.text_secondary))
+            painter.drawText(self._btn_close_rect, Qt.AlignmentFlag.AlignCenter, "✕")
+
+        else:
+            # Guidance text
+            font_txt = QFont(self.font())
+            font_txt.setPixelSize(11)
+            font_txt.setWeight(QFont.Weight.Medium)
+            painter.setFont(font_txt)
+            painter.setPen(QColor(p.text_primary))
+            text_rect = QRectF(18.0, 0.0, w - 50.0, h)
+            painter.drawText(text_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, f"📏 {self._state_text}")
+
+            # Close button
+            btn_close_x = w - 34.0
+            self._btn_close_rect = QRectF(btn_close_x, 6.0, 24.0, 26.0)
+            self._btn_clear_rect = QRectF()
+            if self._is_close_hovered:
+                painter.setBrush(QColor(p.danger if hasattr(p, 'danger') else '#FF4A6E'))
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.drawRoundedRect(self._btn_close_rect, 6.0, 6.0)
+                painter.setPen(QColor('#FFFFFF'))
+            else:
+                painter.setPen(QColor(p.text_secondary))
+            font_btn = QFont(self.font())
+            font_btn.setPixelSize(11)
+            font_btn.setWeight(QFont.Weight.Bold)
+            painter.setFont(font_btn)
+            painter.drawText(self._btn_close_rect, Qt.AlignmentFlag.AlignCenter, "✕")
+
+        painter.end()
+
+
 

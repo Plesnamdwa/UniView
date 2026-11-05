@@ -103,6 +103,28 @@ class AABB:
             max_pt=glm.max(self.max_pt, other.max_pt),
         )
 
+    def transformed(self, transform: glm.mat4) -> "AABB":
+        """Compute the bounding box of this AABB after transforming all 8 corners by a 4x4 matrix."""
+        if not self.is_valid:
+            return self
+        corners = [
+            glm.vec3(self.min_pt.x, self.min_pt.y, self.min_pt.z),
+            glm.vec3(self.min_pt.x, self.min_pt.y, self.max_pt.z),
+            glm.vec3(self.min_pt.x, self.max_pt.y, self.min_pt.z),
+            glm.vec3(self.min_pt.x, self.max_pt.y, self.max_pt.z),
+            glm.vec3(self.max_pt.x, self.min_pt.y, self.min_pt.z),
+            glm.vec3(self.max_pt.x, self.min_pt.y, self.max_pt.z),
+            glm.vec3(self.max_pt.x, self.max_pt.y, self.min_pt.z),
+            glm.vec3(self.max_pt.x, self.max_pt.y, self.max_pt.z),
+        ]
+        new_min = glm.vec3(float("inf"))
+        new_max = glm.vec3(float("-inf"))
+        for c in corners:
+            tc = glm.vec3(transform * glm.vec4(c, 1.0))
+            new_min = glm.min(new_min, tc)
+            new_max = glm.max(new_max, tc)
+        return AABB(new_min, new_max)
+
 
 def assimp_mat_to_glm(mat) -> glm.mat4:
     """
@@ -310,3 +332,50 @@ def generate_joint_sphere_mesh(radius: float = 1.0, rings: int = 8, sectors: int
             vertices.extend([p00, p10, p11, p00, p11, p01])
 
     return np.array(vertices, dtype=np.float32)
+
+
+def generate_gimbal_rings_mesh(
+    radius: float = 1.0,
+    tube_radius: float = 0.075,
+    num_segments: int = 24,
+) -> np.ndarray:
+    """
+    Generate an Unreal Engine style 3D gimbal ring / circle cage mesh (3 orthogonal rings in XY, XZ, YZ).
+    Used for sleek terminal leaf joints and selected joint indicators.
+    Returns interleaved float32 array of shape (N, 6) -> [px, py, pz, nx, ny, nz].
+    """
+    vertices = []
+    # 3 orthogonal rings: XY (normal Z), XZ (normal Y), YZ (normal X)
+    for plane in ("XY", "XZ", "YZ"):
+        for i in range(num_segments):
+            a1 = (i / num_segments) * 2.0 * math.pi
+            a2 = ((i + 1) / num_segments) * 2.0 * math.pi
+            # 4-sided tubular cross section for crisp, lightweight, facet-shaded ring
+            for j in range(4):
+                b1 = (j / 4) * 2.0 * math.pi
+                b2 = ((j + 1) / 4) * 2.0 * math.pi
+
+                def pt(a, b):
+                    ca, sa = math.cos(a), math.sin(a)
+                    cb, sb = math.cos(b), math.sin(b)
+                    r = radius + tube_radius * cb
+                    h = tube_radius * sb
+                    if plane == "XY":
+                        p = [r * ca, r * sa, h]
+                        n = [cb * ca, cb * sa, sb]
+                    elif plane == "XZ":
+                        p = [r * ca, h, r * sa]
+                        n = [cb * ca, sb, cb * sa]
+                    else:
+                        p = [h, r * ca, r * sa]
+                        n = [sb, cb * ca, cb * sa]
+                    return p + n
+
+                p00 = pt(a1, b1)
+                p10 = pt(a2, b1)
+                p11 = pt(a2, b2)
+                p01 = pt(a1, b2)
+                vertices.extend([p00, p10, p11, p00, p11, p01])
+
+    return np.array(vertices, dtype=np.float32)
+

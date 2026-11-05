@@ -16,7 +16,7 @@ from __future__ import annotations
 import os
 import sys
 from typing import Optional, List
-from PyQt6.QtCore import Qt, QSize, QSettings
+from PyQt6.QtCore import Qt, QSize, QSettings, QPoint
 from PyQt6.QtGui import QAction, QActionGroup, QKeySequence, QIcon, QDragEnterEvent, QDropEvent, QCloseEvent
 from PyQt6.QtWidgets import (
     QMainWindow,
@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QVBoxLayout,
     QApplication,
+    QMenu,
 )
 
 from core.scene_loader import SceneLoader, SceneData, SUPPORTED_EXTENSIONS, get_file_dialog_filter
@@ -219,6 +220,21 @@ class MainWindow(QMainWindow):
         self.btn_pill_focus.setToolTip("Focus camera on selected Bone, Mesh, or Material (F)")
         layout.addWidget(self.btn_pill_focus)
 
+        # Up Vector Pill Selector (Y-Up / Z-Up / Flip)
+        self.btn_pill_up = QPushButton("📐 Y-Up")
+        self.btn_pill_up.setProperty("pill", True)
+        self.btn_pill_up.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_pill_up.setToolTip("Set Up Vector Orientation: Y-Axis / Z-Axis / Flip")
+        layout.addWidget(self.btn_pill_up)
+
+        # 3D Measurement Tool Pill Button
+        self.btn_pill_measure = QPushButton("📏 Measure")
+        self.btn_pill_measure.setProperty("pill", True)
+        self.btn_pill_measure.setCheckable(True)
+        self.btn_pill_measure.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_pill_measure.setToolTip("Toggle 3D Distance & Angle Measurement Tool (M)")
+        layout.addWidget(self.btn_pill_measure)
+
         # Theme Switcher Pill (Dark / Light mode)
         self.btn_theme_toggle = QPushButton("🌙 Dark")
         self.btn_theme_toggle.setProperty("pill", True)
@@ -323,6 +339,38 @@ class MainWindow(QMainWindow):
         self.act_gizmo.setChecked(True)
         self.act_gizmo.toggled.connect(self.viewport.set_show_gizmo)
         menu_view.addAction(self.act_gizmo)
+
+        menu_view.addSeparator()
+
+        # Up Vector Submenu
+        menu_up = menu_view.addMenu("📐 &Up Vector Orientation")
+        self.up_group = QActionGroup(self)
+        self.up_group.setExclusive(True)
+
+        self.act_up_y = QAction("Set &Y-Axis as Up (Y-Up)", self, checkable=True)
+        self.act_up_y.setChecked(True)
+        self.act_up_y.triggered.connect(lambda: self.viewport.set_model_up_vector("Y"))
+        self.up_group.addAction(self.act_up_y)
+        menu_up.addAction(self.act_up_y)
+
+        self.act_up_z = QAction("Set &Z-Axis as Up (Z-Up)", self, checkable=True)
+        self.act_up_z.triggered.connect(lambda: self.viewport.set_model_up_vector("Z"))
+        self.up_group.addAction(self.act_up_z)
+        menu_up.addAction(self.act_up_z)
+
+        menu_up.addSeparator()
+
+        self.act_up_flip = QAction("🔄 &Flip Up Vector", self)
+        self.act_up_flip.triggered.connect(lambda: self.viewport.set_model_up_vector("FLIP"))
+        menu_up.addAction(self.act_up_flip)
+
+        menu_view.addSeparator()
+
+        self.act_measure = QAction("📏 &Measure Tool (Distance & Angle)", self, checkable=True)
+        self.act_measure.setShortcut(QKeySequence(Qt.Key.Key_M))
+        self.act_measure.setStatusTip("Toggle 3D distance and inclination angle measurement (M)")
+        self.act_measure.toggled.connect(self.viewport.set_measure_mode)
+        menu_view.addAction(self.act_measure)
 
         menu_view.addSeparator()
 
@@ -453,6 +501,46 @@ class MainWindow(QMainWindow):
         self.skeleton_panel.bind_pose_reset.connect(lambda: self.viewport.show_toast("Bind pose restored", kind="info"))
         self.skeleton_panel.refresh_viewport_requested.connect(self.viewport.update)
         self.skeleton_panel.focus_requested.connect(self.focus_selection)
+
+        # Up Vector signals
+        self.btn_pill_up.clicked.connect(self._show_up_vector_popup)
+        self.viewport.up_vector_changed.connect(self._on_up_vector_changed)
+
+        # Measurement Tool signals
+        self.btn_pill_measure.toggled.connect(self.viewport.set_measure_mode)
+        self.viewport.measure_mode_toggled.connect(self.btn_pill_measure.setChecked)
+        self.viewport.measure_mode_toggled.connect(self.act_measure.setChecked)
+
+    def _show_up_vector_popup(self) -> None:
+        """Display sleek dropdown menu to switch between Y-Up, Z-Up, and Flip."""
+        menu = QMenu(self)
+        act_y = menu.addAction("📐 Set Y-Axis as Up (Y-Up)")
+        act_z = menu.addAction("📐 Set Z-Axis as Up (Z-Up)")
+        menu.addSeparator()
+        act_flip = menu.addAction("🔄 Flip Up Vector")
+
+        act_y.setCheckable(True)
+        act_z.setCheckable(True)
+        act_y.setChecked(self.viewport._up_mode == "Y")
+        act_z.setChecked(self.viewport._up_mode == "Z")
+
+        pt = self.btn_pill_up.mapToGlobal(QPoint(0, self.btn_pill_up.height() + 4))
+        chosen = menu.exec(pt)
+        if chosen == act_y:
+            self.viewport.set_model_up_vector("Y")
+        elif chosen == act_z:
+            self.viewport.set_model_up_vector("Z")
+        elif chosen == act_flip:
+            self.viewport.set_model_up_vector("FLIP")
+
+    def _on_up_vector_changed(self, mode: str, is_flipped: bool) -> None:
+        """Synchronize button text and menu checkmarks with up vector state."""
+        flip_tag = " (Flipped)" if is_flipped else ""
+        self.btn_pill_up.setText(f"📐 {mode}-Up{flip_tag}")
+        if hasattr(self, "act_up_y"):
+            self.act_up_y.setChecked(mode == "Y")
+        if hasattr(self, "act_up_z"):
+            self.act_up_z.setChecked(mode == "Z")
 
     # -------------------------------------------------------------------------
     # Theme Engine Control (Dark Mode / Light Mode)
@@ -724,10 +812,11 @@ class MainWindow(QMainWindow):
     def _show_about_dialog(self) -> None:
         about_text = (
             "<h2>UniView 2.0</h2>"
-            "<p><b>Minimalist 3D Asset & Rig Visualizer</b></p>"
+            "<p><b>Next-Gen Minimalist 3D Asset & Rig Visualizer</b></p>"
             "<p>Engineered with Python, PyQt6, ModernGL, PyGLM, and PyAssimp.</p>"
             "<p>Features hardware-accelerated OpenGL 3.3+ rendering, Expanding Label Navigation, "
-            "Dark & Light Mode studio themes, interactive Forward Kinematics, and vertex weight heatmaps.</p>"
+            "Dark & Light Mode studio themes, interactive Forward Kinematics, vertex weight heatmaps, "
+            "Unreal Engine style skeleton leaf rings, smooth Up-Vector slerp orientation, and 3D interactive measurement tools.</p>"
         )
         QMessageBox.about(self, "About UniView", about_text)
 
@@ -742,6 +831,7 @@ class MainWindow(QMainWindow):
             "<tr><td><b>A / Shift+F</b></td><td>Frame Entire 3D Model</td></tr>"
             "<tr><td><b>Home</b></td><td>Reset Camera to Home Position</td></tr>"
             "<tr><td><b>1 · 2 · 3 · 4</b></td><td>Shading: Textured · Base · Weight Heatmap · Unlit</td></tr>"
+            "<tr><td><b>M</b></td><td>Toggle 3D Measurement Mode (Click 2 points to measure)</td></tr>"
             "<tr><td><b>G</b></td><td>Toggle Ground Grid</td></tr>"
             "<tr><td><b>B</b></td><td>Toggle Skeleton Bones Overlay</td></tr>"
             "<tr><td><b>X</b></td><td>Toggle Skeleton X-Ray Mode</td></tr>"

@@ -1,0 +1,47 @@
+# Changelog
+
+All notable changes to **UniView** will be documented in this file.
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+---
+
+## [2.0.0] - 2026-11-05
+
+### 🌟 Added
+- **Unreal Engine Style Skeleton & Terminal Rings**:
+  - Re-architected anatomical octahedral bone connectivity (`core/skeleton.py`) so bone cones strictly connect from parent to real child joints.
+  - Eliminated artificial spike projections on leaf bones (fingertips, top of skull, toes).
+  - Added 3D orthogonal circular gimbal rings (`core/math_utils.py` & `core/renderer.py`) for all terminal joints and highlighted active bones.
+- **Up-Vector Orientation Lerp (Y-Up / Z-Up / Flip)**:
+  - 1-click smooth transition between OpenGL / glTF standard (`Y-Up`), Unreal Engine / 3ds Max / Blender standard (`Z-Up`), and vertical inversion (`Flip`).
+  - Implemented 60 FPS quaternion slerp easing (`OutCubic` curve $\approx 0.38\text{s}$) for silky smooth model rotation.
+  - Studio floor ground grid stays locked at $Y=0$, while the avatar rotates in world space.
+  - Camera automatically calculates new bounding box (`AABB.transformed`) and re-frames the avatar smoothly.
+  - Top header pill dropdown (`📐 Y-Up`) and `View -> Up Vector Orientation` menu.
+- **3D Interactive Measurement Tool (Distance & Angle)**:
+  - Added vectorized *Möller-Trumbore* 3D raycasting (`core/raycast.py`) achieving $< 5\text{ms}$ intersection checks over tens of thousands of triangles.
+  - **Intelligent Click vs Drag Discrimination**: Distinguishes between mouse drag ($> 4\text{px}$) to orbit camera normally and single click ($\le 4\text{px}$) to accurately drop measurement points on polygon surfaces.
+  - Visual 3D markers with coral/mint spheres, gimbal rings, and golden connecting 3D connector rod.
+  - Floating pill HUD card displaying live Euclidean distance and inclination angle relative to ground floor, with 1-click clear (`↺`) and dismiss (`✕`).
+  - Keyboard shortcut `M` and top header pill button (`📏 Measure`).
+
+### 🐛 Fixed
+- Fixed runtime `NameError` crash (`QMenu` and `QPoint` missing from imports) when opening Up-Vector popup dropdown from the header bar.
+- Fixed camera focusing (`F`) when the model is rotated in Z-Up or Flipped orientation by transforming submesh and bone bounding boxes accordingly.
+
+---
+
+## [1.0.0] - 2026-11-04
+
+### 🌟 Added
+- **Minimalist "Juicy Simple" UI Redesign**:
+  - Dual studio themes: **Obsidian Dark** (`#111018`) and **Alabaster Light** (`#F3F4F9`) with `Ctrl+T` runtime switching.
+  - Custom `ExpandingTabBar` with 60 FPS animated sliding pill capsule and monoline vector icons.
+  - Custom vector widgets: `ToggleSwitch`, `SegmentedControl`, and `IconButton` rendered with `QPainter`.
+  - Floating viewport HUD for shading modes (`Textured`, `Base Color`, `Heatmap`, `Unlit`).
+  - Bottom-right floating `ToastNotification` pills for micro-feedback.
+  - Drag-and-drop viewport overlay card (`Drop 3D Asset to Open`).
+  - Status bar camera throttling (~12 Hz) to prevent Qt relayout overhead during 60 FPS orbit.
+  - `QSettings` persistence for window geometry, theme preference, and Recent Files history.
+- **Standalone Windows Executable**:
+  - Bundled standalone zero-dependency executable (`UniView.exe`) via PyInstaller with embedded C++ Assimp runtime.
