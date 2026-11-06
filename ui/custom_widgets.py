@@ -1429,8 +1429,8 @@ class MeasurementHUDCard(QWidget):
             font_val.setWeight(QFont.Weight.Bold)
             painter.setFont(font_val)
 
-            # Left section: Distance icon & text
-            dist_str = f"⤢ {self._distance:.3f}"
+            # Left section: Distance readout
+            dist_str = f"Dist: {self._distance:.3f}"
             painter.setPen(QColor(p.accent))
             dist_rect = QRectF(16.0, 0.0, 105.0, h)
             painter.drawText(dist_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, dist_str)
@@ -1439,8 +1439,8 @@ class MeasurementHUDCard(QWidget):
             painter.setPen(QPen(QColor(p.card_border), 1.0))
             painter.drawLine(int(125), int(8), int(125), int(h - 8))
 
-            # Middle section: Angle icon & text
-            angle_str = f"📐 {self._angle:.1f}°"
+            # Middle section: Angle readout
+            angle_str = f"Ang: {self._angle:.1f}°"
             painter.setPen(QColor(p.success if hasattr(p, 'success') else p.accent))
             angle_rect = QRectF(135.0, 0.0, 90.0, h)
             painter.drawText(angle_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, angle_str)
@@ -1463,7 +1463,7 @@ class MeasurementHUDCard(QWidget):
             font_snap.setWeight(QFont.Weight.Bold)
             painter.setFont(font_snap)
             painter.setPen(QColor(p.accent if self._snap_enabled else p.text_secondary))
-            painter.drawText(self._btn_snap_rect, Qt.AlignmentFlag.AlignCenter, "🧲 Snap")
+            painter.drawText(self._btn_snap_rect, Qt.AlignmentFlag.AlignCenter, "Snap")
 
             # Clear button
             btn_clear_x = w - 62.0
@@ -1510,7 +1510,7 @@ class MeasurementHUDCard(QWidget):
             font_snap.setWeight(QFont.Weight.Bold)
             painter.setFont(font_snap)
             painter.setPen(QColor(p.accent if self._snap_enabled else p.text_secondary))
-            painter.drawText(self._btn_snap_rect, Qt.AlignmentFlag.AlignCenter, "🧲 Snap")
+            painter.drawText(self._btn_snap_rect, Qt.AlignmentFlag.AlignCenter, "Snap")
 
             # Guidance text
             font_txt = QFont(self.font())
@@ -1519,7 +1519,7 @@ class MeasurementHUDCard(QWidget):
             painter.setFont(font_txt)
             painter.setPen(QColor(p.text_primary))
             text_rect = QRectF(16.0, 0.0, btn_snap_x - 22.0, h)
-            painter.drawText(text_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, f"📏 {self._state_text}")
+            painter.drawText(text_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, self._state_text)
 
             # Close button
             btn_close_x = w - 34.0
@@ -1598,7 +1598,42 @@ class BoundingBoxHUDCard(QWidget):
         parent = self.parentWidget()
         if not parent:
             return
-        w = 360
+
+        font_dim = QFont(self.font())
+        font_dim.setPixelSize(11)
+        font_dim.setWeight(QFont.Weight.Bold)
+        fm = QFontMetrics(font_dim)
+
+        font_vol = QFont(self.font())
+        font_vol.setPixelSize(11)
+        font_vol.setWeight(QFont.Weight.Bold)
+        fm_vol = QFontMetrics(font_vol)
+
+        sx = self._bbox_info.width if (self._bbox_info and self._bbox_info.is_valid) else 0.0
+        sy = self._bbox_info.height if (self._bbox_info and self._bbox_info.is_valid) else 0.0
+        sz = self._bbox_info.depth if (self._bbox_info and self._bbox_info.is_valid) else 0.0
+        vol = self._bbox_info.volume if (self._bbox_info and self._bbox_info.is_valid) else 0.0
+
+        w_str = f"W {sx:.2f}m"
+        h_str = f"H {sy:.2f}m"
+        d_str = f"D {sz:.2f}m"
+        vol_str = f"{vol:.2f}m³"
+
+        # Dynamically measure content to prevent text clipping
+        content_w = (
+            20.0  # left margin
+            + fm.horizontalAdvance(w_str)
+            + 24.0  # separator 1
+            + fm.horizontalAdvance(h_str)
+            + 24.0  # separator 2
+            + fm.horizontalAdvance(d_str)
+            + 24.0  # separator 3
+            + fm_vol.horizontalAdvance(vol_str)
+            + 32.0  # spacing before close button
+            + 20.0  # close button
+            + 16.0  # right margin
+        )
+        w = max(390, int(content_w))
         h = 38
         self.resize(w, h)
         base_y = parent.height() - h - 22
@@ -1672,63 +1707,271 @@ class BoundingBoxHUDCard(QWidget):
             sy = self._bbox_info.height
             sz = self._bbox_info.depth
 
-            # Box icon
-            font_icon = QFont(self.font())
-            font_icon.setPixelSize(11)
-            painter.setFont(font_icon)
-            painter.setPen(QColor(p.text_secondary))
-            painter.drawText(QRectF(14.0, 0.0, 18.0, h), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, "📦")
-
             font_dim = QFont(self.font())
             font_dim.setPixelSize(11)
             font_dim.setWeight(QFont.Weight.Bold)
-            painter.setFont(font_dim)
+            fm = QFontMetrics(font_dim)
 
             font_sep = QFont(self.font())
             font_sep.setPixelSize(10)
 
+            font_vol = QFont(self.font())
+            font_vol.setPixelSize(11)
+            font_vol.setWeight(QFont.Weight.Bold)
+            fm_vol = QFontMetrics(font_vol)
+
+            w_str = f"W {sx:.2f}m"
+            h_str = f"H {sy:.2f}m"
+            d_str = f"D {sz:.2f}m"
+            vol_str = f"{self._bbox_info.volume:.2f}m³"
+
+            curr_x = 20.0
+
             # W: Coral/Red
+            painter.setFont(font_dim)
             painter.setPen(QColor('#FF5C5C'))
-            painter.drawText(QRectF(34.0, 0.0, 64.0, h), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, f"W {sx:.2f}m")
+            w_w = fm.horizontalAdvance(w_str)
+            painter.drawText(QRectF(curr_x, 0.0, w_w + 2.0, h), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, w_str)
+            curr_x += w_w + 10.0
 
             # Separator 1
             painter.setFont(font_sep)
             painter.setPen(QColor(p.card_border))
-            painter.drawText(QRectF(98.0, 0.0, 10.0, h), Qt.AlignmentFlag.AlignCenter, "│")
+            painter.drawText(QRectF(curr_x, 0.0, 8.0, h), Qt.AlignmentFlag.AlignCenter, "│")
+            curr_x += 8.0 + 10.0
 
             # H: Emerald Green
             painter.setFont(font_dim)
             painter.setPen(QColor('#4ADE80'))
-            painter.drawText(QRectF(110.0, 0.0, 64.0, h), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, f"H {sy:.2f}m")
+            h_w = fm.horizontalAdvance(h_str)
+            painter.drawText(QRectF(curr_x, 0.0, h_w + 2.0, h), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, h_str)
+            curr_x += h_w + 10.0
 
             # Separator 2
             painter.setFont(font_sep)
             painter.setPen(QColor(p.card_border))
-            painter.drawText(QRectF(174.0, 0.0, 10.0, h), Qt.AlignmentFlag.AlignCenter, "│")
+            painter.drawText(QRectF(curr_x, 0.0, 8.0, h), Qt.AlignmentFlag.AlignCenter, "│")
+            curr_x += 8.0 + 10.0
 
             # D: Sky Blue
             painter.setFont(font_dim)
             painter.setPen(QColor('#38BDF8'))
-            painter.drawText(QRectF(186.0, 0.0, 64.0, h), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, f"D {sz:.2f}m")
+            d_w = fm.horizontalAdvance(d_str)
+            painter.drawText(QRectF(curr_x, 0.0, d_w + 2.0, h), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, d_str)
+            curr_x += d_w + 10.0
 
             # Separator 3
             painter.setFont(font_sep)
             painter.setPen(QColor(p.card_border))
-            painter.drawText(QRectF(250.0, 0.0, 10.0, h), Qt.AlignmentFlag.AlignCenter, "│")
+            painter.drawText(QRectF(curr_x, 0.0, 8.0, h), Qt.AlignmentFlag.AlignCenter, "│")
+            curr_x += 8.0 + 10.0
 
             # Volume: Soft Violet/Purple
-            font_vol = QFont(self.font())
-            font_vol.setPixelSize(10)
-            font_vol.setWeight(QFont.Weight.Bold)
             painter.setFont(font_vol)
             painter.setPen(QColor('#C084FC'))
-            vol_str = f"{self._bbox_info.volume:.2f}m³"
-            painter.drawText(QRectF(262.0, 0.0, 64.0, h), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, vol_str)
+            vol_w = fm_vol.horizontalAdvance(vol_str)
+            painter.drawText(QRectF(curr_x, 0.0, vol_w + 6.0, h), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, vol_str)
         else:
             font_dim = QFont(self.font())
             font_dim.setPixelSize(11)
             painter.setFont(font_dim)
             painter.setPen(QColor(p.text_secondary))
-            painter.drawText(QRectF(16.0, 0.0, 280.0, h), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, "No active model bounds")
+            painter.drawText(QRectF(20.0, 0.0, 280.0, h), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, "No active model bounds")
+
+        painter.end()
+
+
+class BlenderOrientationGizmo(QWidget):
+    """
+    Blender-style 3D Viewport Orientation Navigation Widget.
+    Features:
+    - 6 axes: +X (Red), +Y (Green), +Z (Blue) solid circles with text 'X', 'Y', 'Z';
+      -X, -Y, -Z translucent circular rings.
+    - True 3D depth-sorting based on camera orientation matrix.
+    - 1-click view snapping (+X Right, -X Left, +Y Top, -Y Bottom, +Z Front, -Z Back).
+    - Mouse drag to orbit the camera smoothly in real time.
+    - Interactive hover feedback with outer highlight halo.
+    """
+    view_snap_requested = pyqtSignal(float, float, str)
+    orbit_requested = pyqtSignal(float, float)
+
+    AXIS_PRESETS = [
+        ("+X", glm.vec3(1.0, 0.0, 0.0), 90.0, 0.0, "Right View (+X)", "#EF4444", "X", True),
+        ("-X", glm.vec3(-1.0, 0.0, 0.0), -90.0, 0.0, "Left View (-X)", "#EF4444", "", False),
+        ("+Y", glm.vec3(0.0, 1.0, 0.0), 0.0, 89.0, "Top View (+Y)", "#65A30D", "Y", True),
+        ("-Y", glm.vec3(0.0, -1.0, 0.0), 0.0, -89.0, "Bottom View (-Y)", "#65A30D", "", False),
+        ("+Z", glm.vec3(0.0, 0.0, 1.0), 0.0, 0.0, "Front View (+Z)", "#2563EB", "Z", True),
+        ("-Z", glm.vec3(0.0, 0.0, -1.0), 180.0, 0.0, "Back View (-Z)", "#2563EB", "", False),
+    ]
+
+    def __init__(self, parent: QWidget, camera: any):
+        super().__init__(parent)
+        self.camera = camera
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setMouseTracking(True)
+        self.setFixedSize(96, 96)
+
+        self._hovered_axis: Optional[str] = None
+        self._is_dragging: bool = False
+        self._press_pos: QPointF = QPointF()
+        self._last_mouse_pos: QPointF = QPointF()
+
+    def _get_projected_axes(self) -> List[Tuple[str, float, float, float, str, str, bool, float, float, str]]:
+        """
+        Projects all 6 axis endpoints into widget 2D coordinates.
+        Returns list of (label, sx, sy, sz, color_hex, letter, is_pos, yaw, pitch, name).
+        """
+        cx = float(self.width()) * 0.5
+        cy = float(self.height()) * 0.5
+        arm_radius = 34.0
+
+        rot_view = self.camera.get_orientation_matrix()
+        projected = []
+
+        for label, world_dir, yaw, pitch, name, color_hex, letter, is_pos in self.AXIS_PRESETS:
+            v_view = rot_view * glm.vec4(world_dir, 0.0)
+            sx = cx + float(v_view.x) * arm_radius
+            sy = cy - float(v_view.y) * arm_radius
+            sz = float(v_view.z)
+            projected.append((label, sx, sy, sz, color_hex, letter, is_pos, yaw, pitch, name))
+
+        return projected
+
+    def _hit_test(self, mx: float, my: float) -> Optional[Tuple[str, float, float, str]]:
+        """Hit test mouse coordinate against all 6 projected axis circles."""
+        projected = self._get_projected_axes()
+        best_match = None
+        best_depth = -float("inf")
+        best_dist = float("inf")
+
+        for label, sx, sy, sz, _, _, is_pos, yaw, pitch, name in projected:
+            hit_rad = 12.0 if is_pos else 9.0
+            dist = math.hypot(mx - sx, my - sy)
+            if dist <= hit_rad:
+                if sz > best_depth or (abs(sz - best_depth) < 0.15 and dist < best_dist):
+                    best_depth = sz
+                    best_dist = dist
+                    best_match = (label, yaw, pitch, name)
+
+        return best_match
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._press_pos = event.position()
+            self._last_mouse_pos = event.position()
+            self._is_dragging = True
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        pos = event.position()
+        if self._is_dragging:
+            dx = float(pos.x() - self._last_mouse_pos.x())
+            dy = float(pos.y() - self._last_mouse_pos.y())
+            self._last_mouse_pos = pos
+            if abs(dx) > 0.01 or abs(dy) > 0.01:
+                self.orbit_requested.emit(dx, dy)
+            self.update()
+            event.accept()
+            return
+
+        hit = self._hit_test(pos.x(), pos.y())
+        hover_label = hit[0] if hit else None
+        if hover_label != self._hovered_axis:
+            self._hovered_axis = hover_label
+            self.update()
+
+        if self._hovered_axis is not None:
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
+        else:
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            drag_dist = (event.position() - self._press_pos).manhattanLength()
+            self._is_dragging = False
+
+            if drag_dist <= 4.0:
+                hit = self._hit_test(event.position().x(), event.position().y())
+                if hit is not None:
+                    _, yaw, pitch, name = hit
+                    self.view_snap_requested.emit(yaw, pitch, name)
+            self.update()
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        cx = float(self.width()) * 0.5
+        cy = float(self.height()) * 0.5
+
+        # Background circular plate (subtle dark translucent, Blender style)
+        plate_color = QColor(24, 26, 32)
+        plate_color.setAlpha(125)
+        painter.setBrush(plate_color)
+        painter.setPen(QPen(QColor(255, 255, 255, 20), 1.0))
+        painter.drawEllipse(QPointF(cx, cy), 43.0, 43.0)
+
+        # Get projected 3D axes and sort by view depth (sz ascending: back to front)
+        projected = self._get_projected_axes()
+        projected.sort(key=lambda item: item[3])
+
+        # 1. Draw positive stems (lines from center to positive endpoints)
+        for label, sx, sy, sz, color_hex, _, is_pos, _, _, _ in projected:
+            if is_pos:
+                pen = QPen(QColor(color_hex), 2.2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
+                painter.setPen(pen)
+                painter.drawLine(QPointF(cx, cy), QPointF(sx, sy))
+
+        # 2. Draw center origin dot
+        painter.setBrush(QColor(160, 175, 195, 200))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawEllipse(QPointF(cx, cy), 2.8, 2.8)
+
+        # 3. Draw depth-sorted circles
+        font_axis = QFont(self.font())
+        font_axis.setPixelSize(10)
+        font_axis.setWeight(QFont.Weight.Bold)
+
+        for label, sx, sy, sz, color_hex, letter, is_pos, _, _, _ in projected:
+            is_hover = (self._hovered_axis == label)
+
+            if is_pos:
+                # Solid circle (+X Red, +Y Green, +Z Blue)
+                rad = 11.5 if is_hover else 10.0
+                col = QColor(color_hex)
+                if is_hover:
+                    col = col.lighter(120)
+
+                painter.setBrush(col)
+                if is_hover:
+                    painter.setPen(QPen(QColor(255, 255, 255, 230), 1.8))
+                else:
+                    painter.setPen(QPen(QColor(255, 255, 255, 40), 0.8))
+                painter.drawEllipse(QPointF(sx, sy), rad, rad)
+
+                # Axis letter (X, Y, Z) in crisp bold text
+                painter.setFont(font_axis)
+                painter.setPen(QColor('#FFFFFF'))
+                rect_text = QRectF(sx - rad, sy - rad, rad * 2.0, rad * 2.0)
+                painter.drawText(rect_text, Qt.AlignmentFlag.AlignCenter, letter)
+            else:
+                # Translucent ring (-X, -Y, -Z)
+                rad = 8.5 if is_hover else 7.5
+                col_border = QColor(color_hex)
+                col_border.setAlpha(255 if is_hover else 160)
+
+                col_fill = QColor(color_hex)
+                col_fill.setAlpha(100 if is_hover else 40)
+
+                painter.setBrush(col_fill)
+                painter.setPen(QPen(col_border, 1.8 if is_hover else 1.4))
+                painter.drawEllipse(QPointF(sx, sy), rad, rad)
 
         painter.end()

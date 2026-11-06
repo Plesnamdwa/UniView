@@ -4,8 +4,9 @@ core/gimbal.py
 Provides:
 - Procedural generation of 3 orthogonal rotation rings (X=Pitch/Red, Y=Yaw/Green, Z=Roll/Blue)
 - Extraction of bone-aligned orthonormal gimbal matrices in world space
+- Screen-space constant pixel sizing (zoom-independent) and distance threshold culling
+- Unreal Engine / Blender style tangential linear mouse drag projection
 - Screen-space projection and robust hit-testing of gimbal rings
-- Natural angular delta computation during mouse dragging with angle snapping and precision modifiers
 """
 
 from __future__ import annotations
@@ -13,6 +14,24 @@ import math
 from typing import Optional, Tuple, List, Dict
 import numpy as np
 import glm
+
+
+def compute_screen_constant_radius(
+    camera_pos: glm.vec3,
+    gimbal_center: glm.vec3,
+    fov_deg: float,
+    viewport_h: float,
+    target_pixel_radius: float = 70.0,
+) -> float:
+    """
+    Compute 3D world-space radius that produces a constant pixel radius on screen.
+    Guarantees the gimbal ring stays comfortably sized regardless of camera zoom distance.
+    """
+    cam_dist = float(glm.length(camera_pos - gimbal_center))
+    fov_rad = math.radians(max(fov_deg, 1.0))
+    vp_h = max(float(viewport_h), 10.0)
+    world_radius = cam_dist * math.tan(fov_rad * 0.5) * (2.0 * target_pixel_radius / vp_h)
+    return max(world_radius, 0.001)
 
 
 def get_bone_gimbal_matrix(
@@ -158,7 +177,7 @@ def hit_test_gimbal_rings(
     gimbal_center: glm.vec3,
     gimbal_radius: float,
     rot_matrix: Optional[glm.mat4] = None,
-    hit_tolerance_px: float = 16.0,
+    hit_tolerance_px: float = 18.0,
     num_samples: int = 48,
 ) -> Optional[str]:
     """
@@ -220,61 +239,98 @@ def hit_test_gimbal_rings(
     return best_axis
 
 
-def compute_gimbal_drag_angle(
+def compute_tangent_drag_delta(
     start_mouse: Tuple[float, float],
     current_mouse: Tuple[float, float],
     gimbal_center: glm.vec3,
     axis: str,
+    rot_matrix: glm.mat4,
     camera: any,
     viewport_w: float,
     viewport_h: float,
-    rot_matrix: Optional[glm.mat4] = None,
+    pixel_radius: float = 70.0,
 ) -> float:
     """
-    Compute rotation angle delta (in degrees) from screen-space mouse drag around the gimbal center.
-    Properly handles Qt screen Y-inversion and camera viewing angle relative to the active ring normal.
+    Unreal Engine / Blender style rotation drag.
+    Projects mouse drag vector onto the 2D screen tangent of the rotation arc.
+    Allows user to drag linearly in any natural direction (left/right, up/down);
+    extracts the rotational component along the active ring's axis without requiring circular motions.
     """
     view_mat = camera.get_view_matrix()
     proj_mat = camera.get_projection_matrix()
-    cx, cy, _, in_front = project_world_to_screen(
-        gimbal_center, view_mat, proj_mat, viewport_w, viewport_h
-    )
-    if not in_front:
-        return 0.0
 
-    # 2D screen vectors from projected center
-    dx0 = start_mouse[0] - cx
-    dy0 = start_mouse[1] - cy
-    dx1 = current_mouse[0] - cx
-    dy1 = current_mouse[1] - cy
-
-    angle0 = math.atan2(dy0, dx0)
-    angle1 = math.atan2(dy1, dx1)
-
-    delta_rad = angle1 - angle0
-    # Normalize to [-pi, pi]
-    while delta_rad > math.pi:
-        delta_rad -= 2.0 * math.pi
-    while delta_rad < -math.pi:
-        delta_rad += 2.0 * math.pi
-
-    # Check orientation of the active ring normal relative to the camera vector
-    r_mat = rot_matrix if rot_matrix is not None else glm.mat4(1.0)
-    if axis.upper() == "X":
-        axis_dir = glm.vec3(r_mat[0].x, r_mat[0].y, r_mat[0].z)
-    elif axis.upper() == "Y":
-        axis_dir = glm.vec3(r_mat[1].x, r_mat[1].y, r_mat[1].z)
+    # 1. World rotation axis vector
+    axis = axis.upper()
+    if axis == "X":
+        axis_vec = glm.vec3(rot_matrix[0].x, rot_matrix[0].y, rot_matrix[0].z)
+    elif axis == "Y":
+        axis_vec = glm.vec3(rot_matrix[1].x, rot_matrix[1].y, rot_matrix[1].z)
     else:
-        axis_dir = glm.vec3(r_mat[2].x, r_mat[2].y, r_mat[2].z)
+        axis_vec = glm.vec3(rot_matrix[2].x, rot_matrix[2].y, rot_matrix[2].z)
 
-    # Vector from gimbal center towards camera position
-    view_dir = glm.normalize(camera.position - gimbal_center)
-    dot = glm.dot(axis_dir, view_dir)
+    # 2. Find closest point on the 3D ring to start_mouse to establish the tangent
+    best_dist = float("inf")
+    best_pt_3d = gimbal_center
+    gimbal_rad = compute_screen_constant_radius(
+        camera.position, gimbal_center, camera.fov_deg, viewport_h, pixel_radius
+    )
 
-    # In Qt screen coordinates (Y down), moving clockwise increases atan2(dy, dx),
-    # which is opposite to standard 3D right-hand rule when axis faces camera (dot >= 0).
-    # When axis faces away from camera (dot < 0), viewing angle is inverted.
-    sign = -1.0 if dot >= 0.0 else 1.0
+    for i in range(24):
+        theta = (i / 24.0) * 2.0 * math.pi
+        c_val = math.cos(theta) * gimbal_rad
+        s_val = math.sin(theta) * gimbal_rad
 
-    delta_deg = math.degrees(delta_rad) * sign
+        if axis == "X":
+            loc_p = glm.vec3(0.0, c_val, s_val)
+        elif axis == "Y":
+            loc_p = glm.vec3(c_val, 0.0, s_val)
+        else:
+            loc_p = glm.vec3(c_val, s_val, 0.0)
+
+        world_p = gimbal_center + glm.vec3(rot_matrix * glm.vec4(loc_p, 0.0))
+        sx, sy, _, in_front = project_world_to_screen(world_p, view_mat, proj_mat, viewport_w, viewport_h)
+        if in_front:
+            d = math.hypot(start_mouse[0] - sx, start_mouse[1] - sy)
+            if d < best_dist:
+                best_dist = d
+                best_pt_3d = world_p
+
+    # 3. 3D Tangent vector at the hit point: T = normalize(Axis x Radial)
+    radial_vec = best_pt_3d - gimbal_center
+    rad_len = float(glm.length(radial_vec))
+    if rad_len > 1e-6:
+        r_unit = radial_vec / rad_len
+    else:
+        r_unit = glm.vec3(1.0, 0.0, 0.0)
+
+    tangent_3d = glm.normalize(glm.cross(axis_vec, r_unit))
+
+    # 4. Project tangent into 2D screen space
+    p0_x, p0_y, _, _ = project_world_to_screen(best_pt_3d, view_mat, proj_mat, viewport_w, viewport_h)
+    p1_x, p1_y, _, _ = project_world_to_screen(
+        best_pt_3d + tangent_3d * (gimbal_rad * 0.25), view_mat, proj_mat, viewport_w, viewport_h
+    )
+
+    tx = p1_x - p0_x
+    ty = p1_y - p0_y
+    t_len = math.hypot(tx, ty)
+    if t_len > 1e-4:
+        tx /= t_len
+        ty /= t_len
+    else:
+        tx, ty = 1.0, 0.0
+
+    # 5. Mouse delta vector from start of drag
+    dmx = current_mouse[0] - start_mouse[0]
+    dmy = current_mouse[1] - start_mouse[1]
+
+    # Project mouse delta onto 2D screen tangent
+    tangent_pixels = dmx * tx + dmy * ty
+
+    # Sensitivity: ~0.65 degrees per pixel (matches Unreal Engine / Blender feeling)
+    delta_deg = tangent_pixels * 0.65
     return float(delta_deg)
+
+
+# Backward compatibility alias
+compute_gimbal_drag_angle = compute_tangent_drag_delta

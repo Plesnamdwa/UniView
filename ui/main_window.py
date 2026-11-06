@@ -237,14 +237,14 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.btn_pill_focus)
 
         # Up Vector Pill Selector (Y-Up / Z-Up / Flip)
-        self.btn_pill_up = QPushButton("📐 Y-Up")
+        self.btn_pill_up = QPushButton("Y-Up")
         self.btn_pill_up.setProperty("pill", True)
         self.btn_pill_up.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_pill_up.setToolTip("Set Up Vector Orientation: Y-Axis / Z-Axis / Flip")
         layout.addWidget(self.btn_pill_up)
 
         # 3D Measurement Tool Pill Button
-        self.btn_pill_measure = QPushButton("📏 Measure")
+        self.btn_pill_measure = QPushButton("Measure")
         self.btn_pill_measure.setProperty("pill", True)
         self.btn_pill_measure.setCheckable(True)
         self.btn_pill_measure.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -252,7 +252,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.btn_pill_measure)
 
         # Theme Switcher Pill (Dark / Light mode)
-        self.btn_theme_toggle = QPushButton("🌙 Dark")
+        self.btn_theme_toggle = QPushButton("Dark")
         self.btn_theme_toggle.setProperty("pill", True)
         self.btn_theme_toggle.setProperty("primary", True)
         self.btn_theme_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -356,14 +356,14 @@ class MainWindow(QMainWindow):
         self.act_gizmo.toggled.connect(self.viewport.set_show_gizmo)
         menu_view.addAction(self.act_gizmo)
 
-        self.act_wireframe = QAction("🕸️ &Wireframe Overlay", self, checkable=True)
+        self.act_wireframe = QAction("&Wireframe Overlay", self, checkable=True)
         self.act_wireframe.setChecked(False)
         self.act_wireframe.setShortcut(QKeySequence(Qt.Key.Key_W))
         self.act_wireframe.setStatusTip("Toggle wireframe mesh overlay on top of shaded model (W)")
         self.act_wireframe.toggled.connect(self.viewport.set_wireframe_mode)
         menu_view.addAction(self.act_wireframe)
 
-        self.act_bbox = QAction("📦 &Bounding Box & Dimensions", self, checkable=True)
+        self.act_bbox = QAction("&Bounding Box & Dimensions", self, checkable=True)
         self.act_bbox.setChecked(False)
         self.act_bbox.setShortcuts([QKeySequence("Shift+B"), QKeySequence(Qt.Key.Key_O)])
         self.act_bbox.setStatusTip("Toggle 3D bounding box cage and real-time dimensions HUD (Shift+B / O)")
@@ -373,7 +373,7 @@ class MainWindow(QMainWindow):
         menu_view.addSeparator()
 
         # Up Vector Submenu
-        menu_up = menu_view.addMenu("📐 &Up Vector Orientation")
+        menu_up = menu_view.addMenu("&Up Vector Orientation")
         self.up_group = QActionGroup(self)
         self.up_group.setExclusive(True)
 
@@ -390,13 +390,13 @@ class MainWindow(QMainWindow):
 
         menu_up.addSeparator()
 
-        self.act_up_flip = QAction("🔄 &Flip Up Vector", self)
+        self.act_up_flip = QAction("&Flip Up Vector", self)
         self.act_up_flip.triggered.connect(lambda: self.viewport.set_model_up_vector("FLIP"))
         menu_up.addAction(self.act_up_flip)
 
         menu_view.addSeparator()
 
-        self.act_measure = QAction("📏 &Measure Tool (Distance & Angle)", self, checkable=True)
+        self.act_measure = QAction("&Measure Tool (Distance & Angle)", self, checkable=True)
         self.act_measure.setShortcut(QKeySequence(Qt.Key.Key_M))
         self.act_measure.setStatusTip("Toggle 3D distance and inclination angle measurement (M)")
         self.act_measure.toggled.connect(self.viewport.set_measure_mode)
@@ -405,17 +405,17 @@ class MainWindow(QMainWindow):
         menu_view.addSeparator()
 
         # Theme Submenu (Dark Mode / Light Mode)
-        menu_theme = menu_view.addMenu("🎨 UI &Theme")
+        menu_theme = menu_view.addMenu("UI &Theme")
         theme_group = QActionGroup(self)
         theme_group.setExclusive(True)
 
-        self.act_theme_dark = QAction("🌙 Dark Mode (Obsidian Indigo)", self, checkable=True)
+        self.act_theme_dark = QAction("Dark Mode (Obsidian Indigo)", self, checkable=True)
         self.act_theme_dark.setChecked(True)
         self.act_theme_dark.triggered.connect(lambda: self.set_theme("dark"))
         theme_group.addAction(self.act_theme_dark)
         menu_theme.addAction(self.act_theme_dark)
 
-        self.act_theme_light = QAction("☀️ Light Mode (Minimalist Alabaster)", self, checkable=True)
+        self.act_theme_light = QAction("Light Mode (Minimalist Alabaster)", self, checkable=True)
         self.act_theme_light.triggered.connect(lambda: self.set_theme("light"))
         theme_group.addAction(self.act_theme_light)
         menu_theme.addAction(self.act_theme_light)
@@ -471,7 +471,7 @@ class MainWindow(QMainWindow):
         self.act_xray.toggled.connect(self._on_menu_xray_toggled)
         menu_skel.addAction(self.act_xray)
 
-        self.act_gimbal = QAction("🔄 3D &FK Rotation Gimbal", self, checkable=True)
+        self.act_gimbal = QAction("3D &FK Rotation Gimbal", self, checkable=True)
         self.act_gimbal.setChecked(True)
         self.act_gimbal.setShortcut(QKeySequence(Qt.Key.Key_R))
         self.act_gimbal.setStatusTip("Toggle interactive 3D rotation gimbal rings on selected bone (R)")
@@ -488,7 +488,7 @@ class MainWindow(QMainWindow):
         # ------------------ Help Menu ------------------
         menu_help = menubar.addMenu("&Help")
 
-        act_shortcuts = QAction("⌨️ &Keyboard Shortcuts", self)
+        act_shortcuts = QAction("&Keyboard Shortcuts", self)
         act_shortcuts.setShortcuts([QKeySequence(Qt.Key.Key_F1), QKeySequence("?")])
         act_shortcuts.triggered.connect(self._show_shortcuts_dialog)
         menu_help.addAction(act_shortcuts)
@@ -569,10 +569,10 @@ class MainWindow(QMainWindow):
     def _show_up_vector_popup(self) -> None:
         """Display sleek dropdown menu to switch between Y-Up, Z-Up, and Flip."""
         menu = QMenu(self)
-        act_y = menu.addAction("📐 Set Y-Axis as Up (Y-Up)")
-        act_z = menu.addAction("📐 Set Z-Axis as Up (Z-Up)")
+        act_y = menu.addAction("Set Y-Axis as Up (Y-Up)")
+        act_z = menu.addAction("Set Z-Axis as Up (Z-Up)")
         menu.addSeparator()
-        act_flip = menu.addAction("🔄 Flip Up Vector")
+        act_flip = menu.addAction("Flip Up Vector")
 
         act_y.setCheckable(True)
         act_z.setCheckable(True)
@@ -591,7 +591,7 @@ class MainWindow(QMainWindow):
     def _on_up_vector_changed(self, mode: str, is_flipped: bool) -> None:
         """Synchronize button text and menu checkmarks with up vector state."""
         flip_tag = " (Flipped)" if is_flipped else ""
-        self.btn_pill_up.setText(f"📐 {mode}-Up{flip_tag}")
+        self.btn_pill_up.setText(f"{mode}-Up{flip_tag}")
         if hasattr(self, "act_up_y"):
             self.act_up_y.setChecked(mode == "Y")
         if hasattr(self, "act_up_z"):
@@ -649,10 +649,10 @@ class MainWindow(QMainWindow):
 
         # Sync Header Toggle Button & Menu Actions
         if palette.is_dark:
-            self.btn_theme_toggle.setText("🌙 Dark")
+            self.btn_theme_toggle.setText("Dark")
             self.act_theme_dark.setChecked(True)
         else:
-            self.btn_theme_toggle.setText("☀️ Light")
+            self.btn_theme_toggle.setText("Light")
             self.act_theme_light.setChecked(True)
 
         # Refresh custom-painted widgets
@@ -753,8 +753,8 @@ class MainWindow(QMainWindow):
             self.skeleton_panel.set_scene(scene)
 
             # Update header & status bar
-            self.lbl_header_file.setText(f"📄 {scene.filename}")
-            self.lbl_status_file.setText(f"📄 {scene.filename}")
+            self.lbl_header_file.setText(scene.filename)
+            self.lbl_status_file.setText(scene.filename)
             self.lbl_status_stats.setText(
                 f"Meshes: {len(scene.submeshes)}  ·  Polys: {scene.total_faces:,}  ·  Verts: {scene.total_vertices:,}"
             )
@@ -909,7 +909,7 @@ class MainWindow(QMainWindow):
 
     def _show_shortcuts_dialog(self) -> None:
         shortcuts_html = (
-            "<h3>⌨️ Keyboard Shortcuts & Navigation</h3>"
+            "<h3>Keyboard Shortcuts & Navigation</h3>"
             "<table cellspacing='6' cellpadding='2'>"
             "<tr><td><b>Left Mouse Drag</b></td><td>Orbit Camera around Target</td></tr>"
             "<tr><td><b>Right / Middle Drag</b></td><td>Pan Camera Target</td></tr>"

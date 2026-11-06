@@ -115,7 +115,7 @@ class SkeletonPanel(QWidget):
         tree_layout.setSpacing(6)
 
         self.search_bone_input = QLineEdit()
-        self.search_bone_input.setPlaceholderText("🔍 Search bone hierarchy...")
+        self.search_bone_input.setPlaceholderText("Search bone hierarchy...")
         self.search_bone_input.setClearButtonEnabled(True)
         self.search_bone_input.textChanged.connect(self._filter_bones)
         tree_layout.addWidget(self.search_bone_input)
@@ -257,7 +257,7 @@ class SkeletonPanel(QWidget):
         # Recursively add bone nodes
         def add_bone_item(parent_widget, bone: BoneNode):
             item = QTreeWidgetItem(parent_widget)
-            item.setText(0, f"🦴 {bone.name}")
+            item.setText(0, bone.name)
             skin_str = "Skinned" if bone.has_skin_weights else "Structural"
             item.setToolTip(0, f"Bone: {bone.name} (ID: {bone.id}, {skin_str})")
             item.setData(0, Qt.ItemDataRole.UserRole, bone.id)

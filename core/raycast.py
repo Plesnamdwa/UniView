@@ -197,6 +197,46 @@ def ray_intersect_triangles_vectorized(
     return best_t, best_v
 
 
+def get_deformed_submesh_positions(sub: any, skeleton: Optional[any]) -> np.ndarray:
+    """Return vertex positions, deformed by skeletal skinning if skeleton is actively posed."""
+    if (
+        sub.positions is None
+        or not getattr(sub, "has_bones", False)
+        or skeleton is None
+        or not getattr(skeleton, "has_bones", False)
+        or getattr(sub, "bone_ids", None) is None
+        or getattr(sub, "bone_weights", None) is None
+    ):
+        return sub.positions
+
+    # Check if any bone has non-zero slider rotation
+    is_posed = any(
+        (abs(b.slider_euler_deg.x) > 1e-4 or abs(b.slider_euler_deg.y) > 1e-4 or abs(b.slider_euler_deg.z) > 1e-4)
+        for b in skeleton.bones
+    )
+    if not is_posed:
+        return sub.positions
+
+    # Linear blend skinning on CPU
+    N = len(sub.positions)
+    pos_h = np.ones((N, 4), dtype=np.float32)
+    pos_h[:, :3] = sub.positions
+    mats = skeleton.skinning_matrices
+
+    skinned_pos = np.zeros((N, 3), dtype=np.float32)
+    for slot in range(4):
+        w = sub.bone_weights[:, slot]
+        mask = w > 1e-5
+        if not np.any(mask):
+            continue
+        b_ids = sub.bone_ids[mask, slot]
+        slot_mats = mats[b_ids]
+        transformed = np.einsum("ij,ijk->ik", pos_h[mask], slot_mats)
+        skinned_pos[mask] += transformed[:, :3] * w[mask, np.newaxis]
+
+    return skinned_pos
+
+
 def raycast_scene(
     screen_x: float,
     screen_y: float,
@@ -206,11 +246,12 @@ def raycast_scene(
     scene: Optional[SceneData],
     model_matrix: Optional[glm.mat4] = None,
     snap_to_vertex: bool = False,
+    allow_ground_fallback: bool = False,
 ) -> Optional[RaycastHit]:
     """
     Raycast from 2D viewport coordinates onto 3D scene geometry.
     If `snap_to_vertex=True`, snaps the hit point to the closest triangle vertex.
-    Returns RaycastHit(point, is_vertex_snapped) or fallback ground plane intersection.
+    Returns RaycastHit(point, is_vertex_snapped) or None (no ground fallback unless explicit).
     """
     ray_origin, ray_dir = get_screen_ray(screen_x, screen_y, viewport_w, viewport_h, camera)
 
@@ -222,6 +263,12 @@ def raycast_scene(
     min_dist_to_cam = float("inf")
 
     if scene and scene.submeshes:
+        skeleton = scene.skeleton if hasattr(scene, "skeleton") else None
+        is_posed = skeleton and skeleton.has_bones and any(
+            (abs(b.slider_euler_deg.x) > 1e-4 or abs(b.slider_euler_deg.y) > 1e-4 or abs(b.slider_euler_deg.z) > 1e-4)
+            for b in skeleton.bones
+        )
+
         for sub in scene.submeshes:
             if not sub.visible or sub.vertex_count == 0:
                 continue
@@ -236,13 +283,14 @@ def raycast_scene(
             local_dir_v4 = inv_sub_m * glm.vec4(ray_dir, 0.0)
             local_dir = glm.normalize(glm.vec3(local_dir_v4))
 
-            # Fast AABB rejection
-            t_box = ray_intersect_aabb(local_orig, local_dir, sub.aabb)
-            if t_box is None:
-                continue
+            # Fast AABB rejection (only when in rest pose; when posed, test directly)
+            if not is_posed:
+                t_box = ray_intersect_aabb(local_orig, local_dir, sub.aabb)
+                if t_box is None:
+                    continue
 
-            # sub.positions is already a clean (N, 3) float32 array
-            verts_np = sub.positions
+            # Deformed or bind vertex positions
+            verts_np = get_deformed_submesh_positions(sub, skeleton)
             if verts_np is None or len(verts_np) < 3:
                 continue
             idx_np = sub.indices if (sub.indices is not None and len(sub.indices) > 0) else None
@@ -279,12 +327,11 @@ def raycast_scene(
     if closest_hit_world is not None:
         return RaycastHit(point=closest_hit_world, is_vertex_snapped=closest_hit_snapped)
 
-    # Fallback: Raycast against ground horizontal studio floor (Y = 0)
-    if abs(ray_dir.y) > 1e-6:
+    # Optional Fallback against ground horizontal studio floor (Y = 0)
+    if allow_ground_fallback and abs(ray_dir.y) > 1e-6:
         t_ground = -ray_origin.y / ray_dir.y
         if t_ground > 0.0:
             ground_hit = ray_origin + ray_dir * t_ground
-            # Bound within reasonable studio radius
             radius = scene.scene_aabb.radius * 4.0 if (scene and scene.scene_aabb.is_valid) else 100.0
             if math.hypot(ground_hit.x, ground_hit.z) <= radius:
                 return RaycastHit(point=ground_hit, is_vertex_snapped=False)

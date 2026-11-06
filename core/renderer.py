@@ -16,6 +16,7 @@ Features:
 
 from __future__ import annotations
 import os
+import math
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Tuple
 import numpy as np
@@ -53,6 +54,7 @@ class RenderOptions:
     show_bbox: bool = False
     active_gimbal_axis: Optional[str] = None
     show_fk_gimbal: bool = True
+    locked_gimbal_matrix: Optional[glm.mat4] = None
 
 
 
@@ -583,21 +585,31 @@ class GLRenderer:
                 # Center joint sphere
                 self.joint_vao.render(moderngl.TRIANGLES)
 
-                if options.show_fk_gimbal:
-                    # 3D Viewport Interactive Rotation Gimbal (X-Red, Y-Green, Z-Blue)
-                    # Compact scaling: snugly wraps around the selected joint sphere
-                    gimbal_scale = min(max(j_rad * 2.2, 0.05), radius * 0.08)
-                    bone_node = scene.skeleton.get_bone(b_id)
-                    if bone_node:
-                        _, _, ring_m = get_bone_gimbal_matrix(
-                            bone=bone_node,
-                            model_matrix=model_matrix,
-                            gimbal_radius=gimbal_scale,
-                        )
-                        prog["u_model"].write(glm_to_bytes(ring_m))
+                # Camera distance & framing check
+                world_j_pos = glm.vec3(model_matrix * glm.vec4(j_pos, 1.0))
+                cam_dist = float(glm.length(camera.position - world_j_pos))
+                is_in_range = cam_dist <= (radius * 2.8)
+
+                if options.show_fk_gimbal and is_in_range:
+                    # Constant screen-space radius (~70 pixels on screen)
+                    fov_rad = math.radians(max(camera.fov_deg, 1.0))
+                    vp_h = max(float(self.ctx.viewport[3]), 10.0)
+                    gimbal_scale = cam_dist * math.tan(fov_rad * 0.5) * (2.0 * 70.0 / vp_h)
+
+                    if options.locked_gimbal_matrix is not None:
+                        prog["u_model"].write(glm_to_bytes(options.locked_gimbal_matrix))
                     else:
-                        ring_m = glm.translate(glm.mat4(1.0), j_pos) * glm.scale(glm.mat4(1.0), glm.vec3(gimbal_scale))
-                        prog["u_model"].write(glm_to_bytes(model_matrix * ring_m))
+                        bone_node = scene.skeleton.get_bone(b_id)
+                        if bone_node:
+                            _, _, ring_m = get_bone_gimbal_matrix(
+                                bone=bone_node,
+                                model_matrix=model_matrix,
+                                gimbal_radius=gimbal_scale,
+                            )
+                            prog["u_model"].write(glm_to_bytes(ring_m))
+                        else:
+                            ring_m = glm.translate(glm.mat4(1.0), j_pos) * glm.scale(glm.mat4(1.0), glm.vec3(gimbal_scale))
+                            prog["u_model"].write(glm_to_bytes(model_matrix * ring_m))
 
                     # Ring X (Pitch): Red or Active Highlight
                     is_x = (options.active_gimbal_axis == "X")
@@ -646,29 +658,8 @@ class GLRenderer:
         viewport_h: int,
         camera: ArcballCamera,
     ) -> None:
-        """Render a subtle 3D orientation axis gizmo in the bottom-left corner."""
-        gizmo_size = 80
-        margin = 15
-        self.ctx.viewport = (margin, margin, gizmo_size, gizmo_size)
-
-        # Clear depth for corner overlay
-        self.ctx.disable(moderngl.DEPTH_TEST)
-
-        # Orthographic projection centered at origin
-        ortho_proj = glm.ortho(-1.4, 1.4, -1.4, 1.4, -2.0, 2.0)
-        # Orientation matrix (pure rotation of camera)
-        rot_view = camera.get_orientation_matrix()
-
-        prog = self.gizmo_prog
-        prog["u_proj"].write(glm_to_bytes(ortho_proj))
-        prog["u_view"].write(glm_to_bytes(rot_view))
-        prog["u_model"].write(glm_to_bytes(glm.mat4(1.0)))
-
-        self.gizmo_vao.render(moderngl.LINES, vertices=12)
-
-        # Reset viewport
-        self.ctx.viewport = (0, 0, viewport_w, viewport_h)
-        self.ctx.enable(moderngl.DEPTH_TEST)
+        """Render corner orientation gizmo (now handled cleanly by BlenderOrientationGizmo QWidget)."""
+        pass
 
     def _render_measurement_overlay(
         self,

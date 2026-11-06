@@ -87,7 +87,7 @@ class MeshesPanel(QWidget):
 
         # Minimalist Search Bar
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("🔍 Search sub-meshes...")
+        self.search_input.setPlaceholderText("Search sub-meshes...")
         self.search_input.setClearButtonEnabled(True)
         self.search_input.textChanged.connect(self._filter_meshes)
         layout.addWidget(self.search_input)
