@@ -3,6 +3,7 @@ core/gimbal.py
 3D Viewport Rotation Gimbal for Interactive FK Posing in UniView.
 Provides:
 - Procedural generation of 3 orthogonal rotation rings (X=Pitch/Red, Y=Yaw/Green, Z=Roll/Blue)
+- Extraction of bone-aligned orthonormal gimbal matrices in world space
 - Screen-space projection and robust hit-testing of gimbal rings
 - Natural angular delta computation during mouse dragging with angle snapping and precision modifiers
 """
@@ -14,12 +15,62 @@ import numpy as np
 import glm
 
 
+def get_bone_gimbal_matrix(
+    bone: any,
+    model_matrix: Optional[glm.mat4] = None,
+    gimbal_radius: float = 1.0,
+) -> Tuple[glm.vec3, glm.mat4, glm.mat4]:
+    """
+    Extract the 3D world-space pivot, orthonormal orientation basis, and combined
+    render transform for the interactive FK gimbal rings of a bone.
+    
+    Returns:
+      (world_pivot, rot_matrix, full_transform)
+      - world_pivot: glm.vec3 position of joint in world space
+      - rot_matrix: 4x4 matrix whose columns are normalized local X, Y, Z axes of the bone in world space
+      - full_transform: Combined T * R * S(gimbal_radius) ready for direct upload to shader u_model
+    """
+    model_m = model_matrix if model_matrix is not None else glm.mat4(1.0)
+    M = model_m * bone.world_matrix
+
+    # Joint pivot in world coordinates
+    world_pivot = glm.vec3(M[3].x, M[3].y, M[3].z)
+
+    # Orthonormal orientation basis from column vectors
+    v0 = glm.vec3(M[0].x, M[0].y, M[0].z)
+    v1 = glm.vec3(M[1].x, M[1].y, M[1].z)
+    v2 = glm.vec3(M[2].x, M[2].y, M[2].z)
+
+    l0 = float(glm.length(v0))
+    l1 = float(glm.length(v1))
+    l2 = float(glm.length(v2))
+
+    col0 = (v0 / l0) if l0 > 1e-6 else glm.vec3(1.0, 0.0, 0.0)
+    col1 = (v1 / l1) if l1 > 1e-6 else glm.vec3(0.0, 1.0, 0.0)
+    col2 = (v2 / l2) if l2 > 1e-6 else glm.vec3(0.0, 0.0, 1.0)
+
+    rot_matrix = glm.mat4(
+        glm.vec4(col0, 0.0),
+        glm.vec4(col1, 0.0),
+        glm.vec4(col2, 0.0),
+        glm.vec4(0.0, 0.0, 0.0, 1.0),
+    )
+
+    full_transform = (
+        glm.translate(glm.mat4(1.0), world_pivot)
+        * rot_matrix
+        * glm.scale(glm.mat4(1.0), glm.vec3(gimbal_radius))
+    )
+
+    return world_pivot, rot_matrix, full_transform
+
+
 def generate_single_ring_mesh(
     axis: str,
     radius: float = 1.0,
     tube_radius: float = 0.045,
     num_segments: int = 48,
-    cross_segments: int = 6,
+    cross_segments: int = 8,
 ) -> np.ndarray:
     """
     Generate 3D tubular torus geometry for a single axis rotation ring.
@@ -46,15 +97,15 @@ def generate_single_ring_mesh(
                 h = tube_radius * sb
 
                 if axis == "X":
-                    # Lies in YZ plane, normal is X
+                    # Lies in YZ plane, normal is +X
                     p = [h, r * ca, r * sa]
                     n = [sb, cb * ca, cb * sa]
                 elif axis == "Y":
-                    # Lies in XZ plane, normal is Y
+                    # Lies in XZ plane, normal is +Y
                     p = [r * ca, h, r * sa]
                     n = [cb * ca, sb, cb * sa]
                 else:  # 'Z'
-                    # Lies in XY plane, normal is Z
+                    # Lies in XY plane, normal is +Z
                     p = [r * ca, r * sa, h]
                     n = [cb * ca, cb * sa, sb]
                 return p + n
@@ -108,12 +159,13 @@ def hit_test_gimbal_rings(
     gimbal_radius: float,
     rot_matrix: Optional[glm.mat4] = None,
     hit_tolerance_px: float = 16.0,
-    num_samples: int = 36,
+    num_samples: int = 48,
 ) -> Optional[str]:
     """
     Robust screen-space hit testing against the 3 rotation rings (X, Y, Z).
-    Samples 3D points along each ring circle, projects them to 2D screen space,
-    and returns the closest hit axis ('X', 'Y', 'Z') in front of the camera, or None.
+    Transforms sampled ring circles by the bone's orientation rot_matrix and center,
+    projects them into screen space, and returns the closest hit axis ('X', 'Y', 'Z')
+    in front of the camera, or None.
     """
     if gimbal_radius <= 1e-4:
         return None
@@ -133,13 +185,13 @@ def hit_test_gimbal_rings(
     best_dist = hit_tolerance_px
     best_depth = float("inf")
 
-    # Axes to test
-    axes = [("X", "YZ"), ("Y", "XZ"), ("Z", "XY")]
+    axes = ["X", "Y", "Z"]
 
-    for axis_name, plane in axes:
+    for axis_name in axes:
         for s in range(num_samples):
             theta = (s / num_samples) * 2.0 * math.pi
-            c_val, s_val = math.cos(theta) * gimbal_radius, math.sin(theta) * gimbal_radius
+            c_val = math.cos(theta) * gimbal_radius
+            s_val = math.sin(theta) * gimbal_radius
 
             if axis_name == "X":
                 local_pt = glm.vec3(0.0, c_val, s_val)
@@ -148,7 +200,7 @@ def hit_test_gimbal_rings(
             else:
                 local_pt = glm.vec3(c_val, s_val, 0.0)
 
-            # Transform into world space
+            # Transform into world space using bone orientation rot_matrix
             world_pt = gimbal_center + glm.vec3(r_mat * glm.vec4(local_pt, 0.0))
             sx, sy, sz, in_front = project_world_to_screen(
                 world_pt, view_mat, proj_mat, viewport_w, viewport_h
@@ -180,7 +232,7 @@ def compute_gimbal_drag_angle(
 ) -> float:
     """
     Compute rotation angle delta (in degrees) from screen-space mouse drag around the gimbal center.
-    Determines clockwise / counter-clockwise direction relative to the camera viewing angle.
+    Properly handles Qt screen Y-inversion and camera viewing angle relative to the active ring normal.
     """
     view_mat = camera.get_view_matrix()
     proj_mat = camera.get_projection_matrix()
@@ -190,7 +242,7 @@ def compute_gimbal_drag_angle(
     if not in_front:
         return 0.0
 
-    # 2D screen angles from projected center
+    # 2D screen vectors from projected center
     dx0 = start_mouse[0] - cx
     dy0 = start_mouse[1] - cy
     dx1 = current_mouse[0] - cx
@@ -206,18 +258,23 @@ def compute_gimbal_drag_angle(
     while delta_rad < -math.pi:
         delta_rad += 2.0 * math.pi
 
-    # Check normal of the active ring against camera forward direction
+    # Check orientation of the active ring normal relative to the camera vector
     r_mat = rot_matrix if rot_matrix is not None else glm.mat4(1.0)
     if axis.upper() == "X":
-        axis_dir = glm.vec3(r_mat * glm.vec4(1.0, 0.0, 0.0, 0.0))
+        axis_dir = glm.vec3(r_mat[0].x, r_mat[0].y, r_mat[0].z)
     elif axis.upper() == "Y":
-        axis_dir = glm.vec3(r_mat * glm.vec4(0.0, 1.0, 0.0, 0.0))
+        axis_dir = glm.vec3(r_mat[1].x, r_mat[1].y, r_mat[1].z)
     else:
-        axis_dir = glm.vec3(r_mat * glm.vec4(0.0, 0.0, 1.0, 0.0))
+        axis_dir = glm.vec3(r_mat[2].x, r_mat[2].y, r_mat[2].z)
 
+    # Vector from gimbal center towards camera position
     view_dir = glm.normalize(camera.position - gimbal_center)
     dot = glm.dot(axis_dir, view_dir)
-    sign = 1.0 if dot >= 0.0 else -1.0
+
+    # In Qt screen coordinates (Y down), moving clockwise increases atan2(dy, dx),
+    # which is opposite to standard 3D right-hand rule when axis faces camera (dot >= 0).
+    # When axis faces away from camera (dot < 0), viewing angle is inverted.
+    sign = -1.0 if dot >= 0.0 else 1.0
 
     delta_deg = math.degrees(delta_rad) * sign
     return float(delta_deg)

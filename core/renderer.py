@@ -32,7 +32,7 @@ from core.math_utils import (
 from core.scene_loader import SceneData, SubMeshData
 from core.camera import ArcballCamera
 from core.bounding_box import compute_scene_bounds, generate_bbox_cage_lines, BoundingBoxInfo
-from core.gimbal import generate_single_ring_mesh
+from core.gimbal import generate_single_ring_mesh, get_bone_gimbal_matrix
 
 
 
@@ -585,9 +585,19 @@ class GLRenderer:
 
                 if options.show_fk_gimbal:
                     # 3D Viewport Interactive Rotation Gimbal (X-Red, Y-Green, Z-Blue)
-                    gimbal_scale = max(j_rad * 3.5, cam_dist * 0.08)
-                    ring_m = glm.translate(glm.mat4(1.0), j_pos) * glm.scale(glm.mat4(1.0), glm.vec3(gimbal_scale))
-                    prog["u_model"].write(glm_to_bytes(model_matrix * ring_m))
+                    # Compact scaling: snugly wraps around the selected joint sphere
+                    gimbal_scale = min(max(j_rad * 2.2, 0.05), radius * 0.08)
+                    bone_node = scene.skeleton.get_bone(b_id)
+                    if bone_node:
+                        _, _, ring_m = get_bone_gimbal_matrix(
+                            bone=bone_node,
+                            model_matrix=model_matrix,
+                            gimbal_radius=gimbal_scale,
+                        )
+                        prog["u_model"].write(glm_to_bytes(ring_m))
+                    else:
+                        ring_m = glm.translate(glm.mat4(1.0), j_pos) * glm.scale(glm.mat4(1.0), glm.vec3(gimbal_scale))
+                        prog["u_model"].write(glm_to_bytes(model_matrix * ring_m))
 
                     # Ring X (Pitch): Red or Active Highlight
                     is_x = (options.active_gimbal_axis == "X")

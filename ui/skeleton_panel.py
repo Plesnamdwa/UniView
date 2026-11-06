@@ -296,7 +296,16 @@ class SkeletonPanel(QWidget):
         return self.scene_data.skeleton.get_bone_focus_aabb(target_bone.id, scene_radius)
 
     def select_bone_by_id(self, bone_id: int) -> None:
-        """Programmatically select a bone in the tree by its ID."""
+        """Programmatically select a bone in the tree by its ID, or deselect if bone_id < 0."""
+        if bone_id < 0:
+            self.bone_tree.clearSelection()
+            self._selected_bone = None
+            if self.scene_data and self.scene_data.skeleton:
+                self.scene_data.skeleton.selected_bone_id = -1
+            self._update_readout_empty()
+            self._update_fk_slider_values()
+            return
+
         def search_item(item: QTreeWidgetItem) -> Optional[QTreeWidgetItem]:
             if item.data(0, Qt.ItemDataRole.UserRole) == bone_id:
                 return item
@@ -350,6 +359,16 @@ class SkeletonPanel(QWidget):
     def _update_fk_slider_values(self) -> None:
         """Sync FK sliders to the active bone's interactive rotation offset."""
         if not self._selected_bone:
+            self._updating_ui = True
+            try:
+                self.slider_rx.setValue(0)
+                self.slider_ry.setValue(0)
+                self.slider_rz.setValue(0)
+                self.lbl_rx_val.setText("0°")
+                self.lbl_ry_val.setText("0°")
+                self.lbl_rz_val.setText("0°")
+            finally:
+                self._updating_ui = False
             return
         self._updating_ui = True
         try:

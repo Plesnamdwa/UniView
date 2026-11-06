@@ -30,7 +30,7 @@ from core.math_utils import AABB
 from core.raycast import raycast_scene, pick_bone_at_screen
 from core.gizmo import is_pos_in_gizmo_region, hit_test_gizmo_axis
 from core.bounding_box import compute_scene_bounds, BoundingBoxInfo
-from core.gimbal import hit_test_gimbal_rings, compute_gimbal_drag_angle
+from core.gimbal import hit_test_gimbal_rings, compute_gimbal_drag_angle, get_bone_gimbal_matrix
 from ui.custom_widgets import (
     SegmentedControl,
     ToastNotification,
@@ -435,6 +435,8 @@ class GLViewport(QOpenGLWidget):
         else:
             self.hud_bbox.hide_card()
             self.show_toast("📦 Bounding Box: OFF", kind="neutral")
+        if self.hud_measure.isVisible():
+            self.hud_measure._update_size_and_position()
         self.bbox_toggled.emit(self.render_options.show_bbox)
         self.update()
 
@@ -453,29 +455,40 @@ class GLViewport(QOpenGLWidget):
         """Toggle 3D FK rotation gimbal between active and inactive."""
         self.set_show_fk_gimbal(not self.render_options.show_fk_gimbal)
 
-    def _get_selected_bone_pivot_and_radius(self) -> Tuple[Optional[glm.vec3], float, Optional[any]]:
-        """Return (world_pivot, gimbal_radius, bone_node) for the currently selected bone."""
+    def _get_selected_bone_gimbal_info(self) -> Tuple[Optional[glm.vec3], float, Optional[glm.mat4], Optional[any]]:
+        """Return (world_pivot, gimbal_radius, rot_matrix, bone_node) for the currently selected bone."""
         if (
             not self.scene_data
             or not self.scene_data.skeleton.has_bones
             or self.render_options.active_bone_id < 0
         ):
-            return None, 1.0, None
+            return None, 1.0, None, None
 
         bone = self.scene_data.skeleton.find_bone_by_id(self.render_options.active_bone_id)
         if bone is None:
-            return None, 1.0, None
+            return None, 1.0, None, None
 
         model_m = glm.mat4_cast(self._cur_model_quat)
-        local_pivot = glm.vec3(bone.world_matrix[3].x, bone.world_matrix[3].y, bone.world_matrix[3].z)
-        world_pivot = glm.vec3(model_m * glm.vec4(local_pivot, 1.0))
-
-        cam_dist = float(glm.length(self.camera.position - world_pivot))
         radius = self.scene_data.scene_aabb.radius if self.scene_data.scene_aabb.is_valid else 1.0
-        gimbal_rad = max(cam_dist * 0.08, radius * 0.04, 0.08)
-        return world_pivot, gimbal_rad, bone
 
+        # Compact scaling: matches renderer's joint radius proportion
+        scale_ref = max(float(radius), 0.1)
+        min_j_rad = scale_ref * 0.0028
+        max_j_rad = scale_ref * 0.0120
+        base_j_rad = float(glm.clamp(scale_ref * 0.05 * 0.075, min_j_rad, max_j_rad)) * 1.25
+        gimbal_rad = min(max(base_j_rad * 2.2, 0.05), radius * 0.08)
 
+        world_pivot, rot_matrix, _ = get_bone_gimbal_matrix(
+            bone=bone,
+            model_matrix=model_m,
+            gimbal_radius=gimbal_rad,
+        )
+        return world_pivot, gimbal_rad, rot_matrix, bone
+
+    def _get_selected_bone_pivot_and_radius(self) -> Tuple[Optional[glm.vec3], float, Optional[any]]:
+        """Backward compatible helper returning (world_pivot, gimbal_radius, bone_node)."""
+        pivot, rad, _, bone = self._get_selected_bone_gimbal_info()
+        return pivot, rad, bone
 
     # -------------------------------------------------------------------------
     # 3D Measurement Tool Control Methods
@@ -493,6 +506,8 @@ class GLViewport(QOpenGLWidget):
             self.hud_measure.hide_card()
             self.clear_measurements()
 
+        if self.hud_bbox.isVisible():
+            self.hud_bbox._update_size_and_position()
         self.measure_mode_toggled.emit(enabled)
         self.update()
 
@@ -548,12 +563,13 @@ class GLViewport(QOpenGLWidget):
 
             # 0. Check if clicking on an active 3D FK Rotation Gimbal ring
             if self.render_options.show_fk_gimbal and self.render_options.active_gimbal_axis:
-                pivot, rad, bone = self._get_selected_bone_pivot_and_radius()
-                if bone is not None:
+                pivot, rad, rot_m, bone = self._get_selected_bone_gimbal_info()
+                if bone is not None and pivot is not None:
                     self._is_gimbal_dragging = True
                     self._gimbal_drag_axis = self.render_options.active_gimbal_axis
                     self._gimbal_drag_start_pos = (float(event.pos().x()), float(event.pos().y()))
                     self._gimbal_start_euler = glm.vec3(bone.slider_euler_deg)
+                    self._gimbal_drag_rot_m = rot_m
                     self._is_orbiting = False
                     self._is_potential_click = False
                     event.accept()
@@ -575,8 +591,9 @@ class GLViewport(QOpenGLWidget):
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
         # 1. Active 3D FK Gimbal Ring Dragging
         if self._is_gimbal_dragging:
-            pivot, rad, bone = self._get_selected_bone_pivot_and_radius()
+            pivot, rad, rot_m, bone = self._get_selected_bone_gimbal_info()
             if bone is not None and pivot is not None:
+                drag_rot = getattr(self, "_gimbal_drag_rot_m", rot_m)
                 delta_deg = compute_gimbal_drag_angle(
                     start_mouse=self._gimbal_drag_start_pos,
                     current_mouse=(float(event.pos().x()), float(event.pos().y())),
@@ -585,6 +602,7 @@ class GLViewport(QOpenGLWidget):
                     camera=self.camera,
                     viewport_w=float(self.width()),
                     viewport_h=float(self.height()),
+                    rot_matrix=drag_rot,
                 )
 
                 if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
@@ -628,7 +646,7 @@ class GLViewport(QOpenGLWidget):
         if not event.buttons():
             gimbal_hit = None
             if self.render_options.show_fk_gimbal and self.render_options.show_skeleton:
-                pivot, rad, bone = self._get_selected_bone_pivot_and_radius()
+                pivot, rad, rot_m, bone = self._get_selected_bone_gimbal_info()
                 if pivot is not None:
                     gimbal_hit = hit_test_gimbal_rings(
                         mouse_x=float(event.pos().x()),
@@ -638,6 +656,7 @@ class GLViewport(QOpenGLWidget):
                         camera=self.camera,
                         gimbal_center=pivot,
                         gimbal_radius=rad,
+                        rot_matrix=rot_m,
                         hit_tolerance_px=16.0,
                     )
 
@@ -764,6 +783,13 @@ class GLViewport(QOpenGLWidget):
                         self.show_toast(f"🦴 Selected: {bone_name}", kind="info")
                         self.bone_picked.emit(bone_id)
                         self.update()
+                    else:
+                        # Clicked empty viewport space: Deselect active bone
+                        if self.render_options.active_bone_id >= 0:
+                            self.set_active_bone_id(-1)
+                            self.bone_picked.emit(-1)
+                            self.show_toast("Deselected bone", kind="info")
+                            self.update()
 
             self._is_potential_click = False
             self._is_orbiting = False
@@ -786,10 +812,18 @@ class GLViewport(QOpenGLWidget):
             self.set_measure_mode(not self._is_measure_mode)
             event.accept()
             return
-        elif event.key() == Qt.Key.Key_Escape and self._is_measure_mode:
-            self.set_measure_mode(False)
-            event.accept()
-            return
+        elif event.key() == Qt.Key.Key_Escape:
+            if self._is_measure_mode:
+                self.set_measure_mode(False)
+                event.accept()
+                return
+            if self.render_options.active_bone_id >= 0:
+                self.set_active_bone_id(-1)
+                self.bone_picked.emit(-1)
+                self.show_toast("Deselected bone", kind="info")
+                self.update()
+                event.accept()
+                return
         elif event.key() == Qt.Key.Key_F:
             self.focus_requested.emit()
             event.accept()
@@ -798,7 +832,6 @@ class GLViewport(QOpenGLWidget):
             self.frame_scene()
             event.accept()
             return
-        super().keyPressEvent(event)
         super().keyPressEvent(event)
 
     # -------------------------------------------------------------------------

@@ -598,10 +598,13 @@ class MainWindow(QMainWindow):
             self.act_up_z.setChecked(mode == "Z")
 
     def _on_viewport_bone_picked(self, bone_id: int) -> None:
-        """Handle bone picked via direct 3D viewport raycast."""
-        if self.tabs.currentWidget() != self.skeleton_panel:
-            self.tabs.setCurrentWidget(self.skeleton_panel)
-        self.skeleton_panel.select_bone_by_id(bone_id)
+        """Handle bone picked via direct 3D viewport raycast or deselected (-1)."""
+        if bone_id >= 0:
+            if self.tabs.currentWidget() != self.skeleton_panel:
+                self.tabs.setCurrentWidget(self.skeleton_panel)
+            self.skeleton_panel.select_bone_by_id(bone_id)
+        else:
+            self.skeleton_panel.select_bone_by_id(-1)
 
     def _on_viewport_bone_fk_rotated(self, bone_id: int, rx: float, ry: float, rz: float) -> None:
         """Synchronize real-time 3D viewport gimbal drag rotation with FK sliders & Transform Inspector."""

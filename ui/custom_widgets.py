@@ -1598,11 +1598,15 @@ class BoundingBoxHUDCard(QWidget):
         parent = self.parentWidget()
         if not parent:
             return
-        w = 340
-        h = 58
+        w = 360
+        h = 38
         self.resize(w, h)
-        slide_offset = int((1.0 - self._opacity) * 10.0)
-        self.move(18, 18 - slide_offset)
+        base_y = parent.height() - h - 22
+        # If measurement HUD is active, stack neatly above it
+        if hasattr(parent, "hud_measure") and parent.hud_measure.isVisible():
+            base_y -= (h + 8)
+        slide_offset = int((1.0 - self._opacity) * 12.0)
+        self.move((parent.width() - w) // 2, base_y + slide_offset)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
@@ -1638,30 +1642,23 @@ class BoundingBoxHUDCard(QWidget):
         h = float(self.height())
         r = QRectF(1.0, 1.0, w - 2.0, h - 2.0)
 
-        # Background card with subtle glassmorphic outline
+        # Background stadium capsule matching MeasurementHUDCard
         bg = QColor(p.card_bg)
-        bg.setAlpha(240)
+        bg.setAlpha(245)
         painter.setBrush(bg)
         painter.setPen(QPen(QColor(p.card_border), 1.2))
-        painter.drawRoundedRect(r, 10.0, 10.0)
+        painter.drawRoundedRect(r, h * 0.5, h * 0.5)
 
-        # Header Title: 📦 BOUNDING BOX DIMENSIONS
-        font_title = QFont(self.font())
-        font_title.setPixelSize(10)
-        font_title.setWeight(QFont.Weight.Bold)
-        painter.setFont(font_title)
-        painter.setPen(QColor(p.text_secondary))
-        title_rect = QRectF(14.0, 7.0, 200.0, 16.0)
-        painter.drawText(title_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, "📦 BOUNDING BOX DIMENSIONS")
-
-        # Close button (top right)
-        self._btn_close_rect = QRectF(w - 26.0, 6.0, 18.0, 18.0)
+        # Close button (far right)
+        btn_size = 20.0
+        self._btn_close_rect = QRectF(w - 28.0, (h - btn_size) * 0.5, btn_size, btn_size)
         if self._is_close_hovered:
             painter.setBrush(QColor('#FF4A6E'))
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawRoundedRect(self._btn_close_rect, 4.0, 4.0)
+            painter.drawRoundedRect(self._btn_close_rect, btn_size * 0.5, btn_size * 0.5)
             painter.setPen(QColor('#FFFFFF'))
         else:
+            painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.setPen(QColor(p.text_secondary))
         font_btn = QFont(self.font())
         font_btn.setPixelSize(10)
@@ -1669,42 +1666,69 @@ class BoundingBoxHUDCard(QWidget):
         painter.setFont(font_btn)
         painter.drawText(self._btn_close_rect, Qt.AlignmentFlag.AlignCenter, "✕")
 
-        # Dimensions row: W (X), H (Y), D (Z)
+        # Dimensions row: W (X), H (Y), D (Z) and Volume (m3)
         if self._bbox_info and self._bbox_info.is_valid:
             sx = self._bbox_info.width
             sy = self._bbox_info.height
             sz = self._bbox_info.depth
 
+            # Box icon
+            font_icon = QFont(self.font())
+            font_icon.setPixelSize(11)
+            painter.setFont(font_icon)
+            painter.setPen(QColor(p.text_secondary))
+            painter.drawText(QRectF(14.0, 0.0, 18.0, h), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, "📦")
+
             font_dim = QFont(self.font())
-            font_dim.setPixelSize(12)
+            font_dim.setPixelSize(11)
             font_dim.setWeight(QFont.Weight.Bold)
             painter.setFont(font_dim)
 
-            # X: Red/Coral
+            font_sep = QFont(self.font())
+            font_sep.setPixelSize(10)
+
+            # W: Coral/Red
             painter.setPen(QColor('#FF5C5C'))
-            painter.drawText(QRectF(14.0, 27.0, 85.0, 22.0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, f"W: {sx:.2f}m")
+            painter.drawText(QRectF(34.0, 0.0, 64.0, h), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, f"W {sx:.2f}m")
 
-            # Y: Emerald Green
+            # Separator 1
+            painter.setFont(font_sep)
+            painter.setPen(QColor(p.card_border))
+            painter.drawText(QRectF(98.0, 0.0, 10.0, h), Qt.AlignmentFlag.AlignCenter, "│")
+
+            # H: Emerald Green
+            painter.setFont(font_dim)
             painter.setPen(QColor('#4ADE80'))
-            painter.drawText(QRectF(102.0, 27.0, 85.0, 22.0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, f"H: {sy:.2f}m")
+            painter.drawText(QRectF(110.0, 0.0, 64.0, h), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, f"H {sy:.2f}m")
 
-            # Z: Sky Blue
+            # Separator 2
+            painter.setFont(font_sep)
+            painter.setPen(QColor(p.card_border))
+            painter.drawText(QRectF(174.0, 0.0, 10.0, h), Qt.AlignmentFlag.AlignCenter, "│")
+
+            # D: Sky Blue
+            painter.setFont(font_dim)
             painter.setPen(QColor('#38BDF8'))
-            painter.drawText(QRectF(190.0, 27.0, 85.0, 22.0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, f"D: {sz:.2f}m")
+            painter.drawText(QRectF(186.0, 0.0, 64.0, h), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, f"D {sz:.2f}m")
 
-            # Volume pill (right)
+            # Separator 3
+            painter.setFont(font_sep)
+            painter.setPen(QColor(p.card_border))
+            painter.drawText(QRectF(250.0, 0.0, 10.0, h), Qt.AlignmentFlag.AlignCenter, "│")
+
+            # Volume: Soft Violet/Purple
             font_vol = QFont(self.font())
-            font_vol.setPixelSize(9)
-            font_vol.setWeight(QFont.Weight.Medium)
+            font_vol.setPixelSize(10)
+            font_vol.setWeight(QFont.Weight.Bold)
             painter.setFont(font_vol)
-            painter.setPen(QColor(p.text_secondary))
+            painter.setPen(QColor('#C084FC'))
             vol_str = f"{self._bbox_info.volume:.2f}m³"
-            painter.drawText(QRectF(w - 75.0, 27.0, 60.0, 22.0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight, vol_str)
+            painter.drawText(QRectF(262.0, 0.0, 64.0, h), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, vol_str)
         else:
             font_dim = QFont(self.font())
             font_dim.setPixelSize(11)
             painter.setFont(font_dim)
             painter.setPen(QColor(p.text_secondary))
-            painter.drawText(QRectF(14.0, 27.0, 250.0, 22.0), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, "No active model bounds")
+            painter.drawText(QRectF(16.0, 0.0, 280.0, h), Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, "No active model bounds")
 
         painter.end()
