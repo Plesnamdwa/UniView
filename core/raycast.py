@@ -198,7 +198,7 @@ def ray_intersect_triangles_vectorized(
 
 
 def get_deformed_submesh_positions(sub: any, skeleton: Optional[any]) -> np.ndarray:
-    """Return vertex positions, deformed by skeletal skinning if skeleton is actively posed."""
+    """Return vertex positions, deformed by skeletal skinning if skeleton is present."""
     if (
         sub.positions is None
         or not getattr(sub, "has_bones", False)
@@ -209,15 +209,13 @@ def get_deformed_submesh_positions(sub: any, skeleton: Optional[any]) -> np.ndar
     ):
         return sub.positions
 
-    # Check if any bone has non-zero slider rotation
-    is_posed = any(
-        (abs(b.slider_euler_deg.x) > 1e-4 or abs(b.slider_euler_deg.y) > 1e-4 or abs(b.slider_euler_deg.z) > 1e-4)
-        for b in skeleton.bones
-    )
-    if not is_posed:
-        return sub.positions
+    pose_version = getattr(skeleton, "pose_version", 0)
+    cached_version = getattr(sub, "_cached_pose_version", -1)
+    cached_pos = getattr(sub, "_cached_skinned_pos", None)
+    if cached_version == pose_version and cached_pos is not None:
+        return cached_pos
 
-    # Linear blend skinning on CPU
+    # Linear blend skinning on CPU (matches GPU vertex shader)
     N = len(sub.positions)
     pos_h = np.ones((N, 4), dtype=np.float32)
     pos_h[:, :3] = sub.positions
@@ -234,6 +232,8 @@ def get_deformed_submesh_positions(sub: any, skeleton: Optional[any]) -> np.ndar
         transformed = np.einsum("ij,ijk->ik", pos_h[mask], slot_mats)
         skinned_pos[mask] += transformed[:, :3] * w[mask, np.newaxis]
 
+    sub._cached_pose_version = pose_version
+    sub._cached_skinned_pos = skinned_pos
     return skinned_pos
 
 

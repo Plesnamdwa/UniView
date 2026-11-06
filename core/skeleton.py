@@ -146,6 +146,7 @@ class Skeleton:
             np.eye(4, dtype=np.float32), (MAX_BONES, 1, 1)
         )
         self.is_dirty: bool = True
+        self.pose_version: int = 0
 
     @property
     def has_bones(self) -> bool:
@@ -225,6 +226,7 @@ class Skeleton:
             _traverse_fk(root, glm.mat4(1.0))
 
         self.is_dirty = True
+        self.pose_version = getattr(self, "pose_version", 0) + 1
 
     def reset_bind_pose(self) -> None:
         """Reset all bones in the skeleton to their original bind pose."""
